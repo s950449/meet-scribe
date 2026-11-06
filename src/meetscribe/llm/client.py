@@ -24,11 +24,28 @@ class OpenAIChatClient:
     environment variable is unset. The key stays in memory.
     """
 
-    def __init__(self, *, base_url: str, api_key: str, model: str, timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: float = 120.0,
+        temperature: float = 1.0,
+        top_p: float = 0.95,
+        top_k: int = 64,
+        min_p: float = 0.0,
+        presence_penalty: float | None = None,
+    ) -> None:
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
+        self.min_p = min_p
+        self.presence_penalty = presence_penalty
 
     def complete(self, *, system: str, user: str) -> str:
         try:
@@ -42,14 +59,25 @@ class OpenAIChatClient:
             max_retries=0,
         )
         try:
-            response = client.chat.completions.create(
-                model=self.model,
-                temperature=0.2,
-                messages=[
+            request: dict[str, object] = {
+                "model": self.model,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-            )
+            }
+            if self.presence_penalty is not None:
+                request["presence_penalty"] = self.presence_penalty
+            extra: dict[str, float | int] = {}
+            if self.top_k > 0:
+                extra["top_k"] = self.top_k
+            if self.min_p > 0:
+                extra["min_p"] = self.min_p
+            if extra:
+                request["extra_body"] = extra
+            response = client.chat.completions.create(**request)
         except Exception as exc:
             raise LlmError(f"LLM request to {self.base_url} failed: {exc}") from exc
         if not response.choices:

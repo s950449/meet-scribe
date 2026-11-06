@@ -1,6 +1,6 @@
 import pytest
 
-from meetscribe.config import AppConfig
+from meetscribe.config import AppConfig, apply_overrides
 from meetscribe.errors import LlmError
 from meetscribe.llm.client import extract_json_object, strip_thinking
 from meetscribe.llm.budget import chunk_items, estimate_tokens
@@ -73,7 +73,8 @@ def test_summarizer_parses_action_items() -> None:
     assert summary.action_items[1].due is None
 
 
-def test_factory_uses_llama_server_without_an_api_key() -> None:
+def test_factory_uses_llama_server_without_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("meetscribe.llm.profiles.fetch_loaded_model", lambda *args, **kwargs: None)
     config = AppConfig()
     polisher = build_polisher(config, environ={})
     summarizer = build_summarizer(config, environ={})
@@ -82,6 +83,42 @@ def test_factory_uses_llama_server_without_an_api_key() -> None:
     assert polisher.client.api_key == "llama-server"
     assert polisher.client.base_url == "http://127.0.0.1:8080/v1"
     assert polisher.client.model == "gemma-4-12b-it"
+    assert polisher.client.temperature == 1.0
+    assert polisher.client.top_p == 0.95
+    assert polisher.client.top_k == 64
+    assert polisher.client.presence_penalty is None
+
+
+def test_sampling_profile_follows_the_loaded_model() -> None:
+    from meetscribe.llm.profiles import select_active_llm
+
+    config = AppConfig()
+    qwen = select_active_llm(config, detected="unsloth/Qwen3.5-9B-GGUF", probe=False)
+    assert qwen.source == "server"
+    assert qwen.profile == "qwen3.5-9b"
+    assert qwen.sampling.temperature == 0.7
+    assert qwen.sampling.top_p == 0.8
+    assert qwen.sampling.top_k == 20
+    assert qwen.sampling.presence_penalty == 1.5
+
+    locked = select_active_llm(
+        apply_overrides(config, {"llm_model": "gemma-4-12b-it"}),
+        detected="qwen3.5-9b",
+        probe=False,
+    )
+    assert locked.source == "cli"
+    assert locked.model == "gemma-4-12b-it"
+    assert locked.sampling.temperature == 1.0
+    assert locked.sampling.presence_penalty is None
+
+    overridden = select_active_llm(
+        apply_overrides(config, {"temperature": 0.2}),
+        detected=None,
+        probe=False,
+    )
+    assert overridden.source == "config"
+    assert overridden.sampling.temperature == 0.2
+    assert overridden.sampling.top_k == 64
 
 
 def test_strip_thinking_blocks() -> None:

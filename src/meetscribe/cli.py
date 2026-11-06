@@ -14,6 +14,7 @@ from meetscribe.errors import MeetscribeError
 from meetscribe.events import ProgressEvent, StdioSink
 from meetscribe.audio.devices import parse_pactl_short
 from meetscribe.hardware import detect_hardware, recommended_asr, recommended_capture
+from meetscribe.llm.profiles import select_active_llm
 from meetscribe.pipeline import record_audio, run_meeting, summarize_file
 from meetscribe.probe import describe_backend
 from meetscribe.registry import build_registry
@@ -130,7 +131,10 @@ def transcribe(
         typer.Option("--speaker", "-s", help="Map a speaker id to a name, e.g. Me=林可安. Repeatable."),
     ] = None,
     base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
-    llm_model: Annotated[Optional[str], typer.Option("--llm-model", help="Model name sent to the endpoint.")] = None,
+    llm_model: Annotated[
+        Optional[str],
+        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+    ] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish", help="Keep the raw ASR text.")] = False,
     keep_audio: Annotated[bool, typer.Option("--keep-audio", help="Keep the 16 kHz wavs next to the note.")] = False,
 ) -> None:
@@ -184,7 +188,10 @@ def summarize(
         typer.Option("--speaker", "-s", help="Map a speaker id to a name. Repeatable."),
     ] = None,
     base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
-    llm_model: Annotated[Optional[str], typer.Option("--llm-model", help="Model name sent to the endpoint.")] = None,
+    llm_model: Annotated[
+        Optional[str],
+        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+    ] = None,
 ) -> None:
     """Summarize a transcript JSON file and rewrite the Markdown note."""
 
@@ -222,7 +229,10 @@ def run(
     speaker: Annotated[Optional[list[str]], typer.Option("--speaker", "-s")] = None,
     capture_backend: Annotated[Optional[str], typer.Option("--capture-backend")] = None,
     base_url: Annotated[Optional[str], typer.Option("--base-url")] = None,
-    llm_model: Annotated[Optional[str], typer.Option("--llm-model")] = None,
+    llm_model: Annotated[
+        Optional[str],
+        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+    ] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish")] = False,
     keep_audio: Annotated[bool, typer.Option("--keep-audio")] = False,
     live: Annotated[bool, typer.Option("--live", help="Stream chunk transcripts while recording.")] = False,
@@ -276,11 +286,20 @@ def devices() -> None:
 
 
 @app.command()
-def backends(ctx: typer.Context) -> None:
+def backends(
+    ctx: typer.Context,
+    llm_model: Annotated[
+        Optional[str],
+        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+    ] = None,
+) -> None:
     """List backends and the hardware defaults for this machine."""
 
     hardware = detect_hardware()
     registry = build_registry()
+    config = _config(ctx, llm_model=llm_model)
+    active = select_active_llm(config)
+    sampling = active.sampling
     payload = {
         "hardware": {
             "system": hardware.system,
@@ -292,6 +311,19 @@ def backends(ctx: typer.Context) -> None:
             "recommended_capture": recommended_capture(hardware),
             "vulkan_gpu": hardware.vulkan_gpu,
             "diarization": "track if two tracks else single-speaker",
+        },
+        "llm": {
+            "active_model": active.model,
+            "source": active.source,
+            "profile": active.profile,
+            "base_url": config.llm.base_url,
+            "sampling": {
+                "temperature": sampling.temperature,
+                "top_p": sampling.top_p,
+                "top_k": sampling.top_k,
+                "min_p": sampling.min_p,
+                "presence_penalty": sampling.presence_penalty,
+            },
         },
         "backends": [
             {
@@ -335,6 +367,7 @@ def _format_backends(payload: dict) -> str:
     hardware = payload["hardware"]
     igpu = hardware["intel_igpu"]
     igpu_text = "unknown" if igpu is None else ("yes" if igpu else "no")
+    sampling = payload["llm"]["sampling"]
     lines = [
         "Hardware",
         f"  system: {hardware['system']}",
@@ -346,6 +379,16 @@ def _format_backends(payload: dict) -> str:
         f"  recommended_asr: {hardware['recommended_asr']}",
         f"  recommended_capture: {hardware['recommended_capture']}",
         f"  diarization: {hardware['diarization']}",
+        "",
+        "LLM",
+        f"  model: {payload['llm']['active_model']} ({payload['llm']['source']})",
+        f"  profile: {payload['llm']['profile'] or 'built-in default'}",
+        (
+            "  sampling: "
+            f"temperature={sampling['temperature']} top_p={sampling['top_p']} "
+            f"top_k={sampling['top_k']} min_p={sampling['min_p']} "
+            f"presence_penalty={sampling['presence_penalty']}"
+        ),
     ]
     current = None
     for spec in payload["backends"]:

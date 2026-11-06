@@ -22,7 +22,8 @@ hf_token_env = "HF_TOKEN"
 
 [llm]
 # llama.cpp llama-server. The model name is a label; single-model llama-server ignores it.
-# Default GGUF: ggml-org/gemma-4-12B-it-GGUF (Q4_K_M). Fallback: bartowski/Qwen_Qwen3.5-9B-GGUF.
+# Default GGUF: unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL (7.37 GB).
+# Fallback: unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL (5.97 GB).
 base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
 model = "gemma-4-12b-it"
@@ -31,6 +32,21 @@ polish = true
 # Both models support 256K. 16384 keeps the KV cache realistic on an iGPU.
 context_tokens = 16384
 reserve_tokens = 2048
+# Uncomment to override every profile:
+# temperature = 0.2
+
+[llm.profiles."gemma-4-12b-it"]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+min_p = 0.0
+
+[llm.profiles."qwen3.5-9b"]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
 
 [capture]
 backend = "auto" # auto | file | macos | windows | linux

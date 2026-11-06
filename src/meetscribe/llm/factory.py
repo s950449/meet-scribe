@@ -8,6 +8,7 @@ from meetscribe.config import AppConfig
 from meetscribe.llm.budget import content_budget
 from meetscribe.llm.client import OpenAIChatClient
 from meetscribe.llm.polisher import IdentityPolisher, OpenAIPolisher
+from meetscribe.llm.profiles import select_active_llm
 from meetscribe.llm.prompts import POLISH_SYSTEM, SUMMARY_MERGE_SYSTEM, SUMMARY_SYSTEM
 from meetscribe.llm.summarizer import OpenAISummarizer
 
@@ -32,10 +33,17 @@ def build_summarizer(
 
 
 def _client(config: AppConfig, environ: Mapping[str, str] | None) -> OpenAIChatClient:
+    active = select_active_llm(config)
+    sampling = active.sampling
     return OpenAIChatClient(
         base_url=config.llm.base_url,
         api_key=config.resolved_api_key(environ),
-        model=config.llm.model,
+        model=active.model,
+        temperature=sampling.temperature,
+        top_p=sampling.top_p,
+        top_k=sampling.top_k,
+        min_p=sampling.min_p,
+        presence_penalty=sampling.presence_penalty,
     )
 
 

@@ -43,6 +43,36 @@ class DiarizationSettings:
     hf_token_env: str = "HF_TOKEN"
 
 
+@dataclass(frozen=True, slots=True)
+class SamplingProfile:
+    temperature: float
+    top_p: float
+    top_k: int
+    min_p: float = 0.0
+    presence_penalty: float | None = None
+
+
+def default_sampling_profiles() -> dict[str, SamplingProfile]:
+    """Unsloth card values. Gemma is the default model; Qwen is the smaller GGUF."""
+
+    return {
+        "gemma-4-12b-it": SamplingProfile(
+            temperature=1.0,
+            top_p=0.95,
+            top_k=64,
+            min_p=0.0,
+            presence_penalty=None,
+        ),
+        "qwen3.5-9b": SamplingProfile(
+            temperature=0.7,
+            top_p=0.8,
+            top_k=20,
+            min_p=0.0,
+            presence_penalty=1.5,
+        ),
+    }
+
+
 @dataclass
 class LlmSettings:
     base_url: str = DEFAULT_LLM_BASE_URL
@@ -55,6 +85,15 @@ class LlmSettings:
     context_tokens: int = 16384
     # Room for the JSON completion. Not sent to the server.
     reserve_tokens: int = 2048
+    # None means "use the matched profile". A value set in TOML or on the CLI overrides it.
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    profiles: dict[str, SamplingProfile] = field(default_factory=default_sampling_profiles)
+    # Set when --llm-model (or MEETSCRIBE_LLM_MODEL) names the model explicitly.
+    model_locked: bool = False
 
 
 @dataclass
@@ -175,13 +214,23 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
     if "llm_base_url" in overrides and overrides["llm_base_url"] is not None:
         llm = replace(llm, base_url=str(overrides["llm_base_url"]))
     if "llm_model" in overrides and overrides["llm_model"] is not None:
-        llm = replace(llm, model=str(overrides["llm_model"]))
+        llm = replace(llm, model=str(overrides["llm_model"]), model_locked=True)
     if "llm_polish" in overrides and overrides["llm_polish"] is not None:
         llm = replace(llm, polish=bool(overrides["llm_polish"]))
     if "context_tokens" in overrides and overrides["context_tokens"] is not None:
         llm = replace(llm, context_tokens=int(overrides["context_tokens"]))
     if "reserve_tokens" in overrides and overrides["reserve_tokens"] is not None:
         llm = replace(llm, reserve_tokens=int(overrides["reserve_tokens"]))
+    if "temperature" in overrides and overrides["temperature"] is not None:
+        llm = replace(llm, temperature=float(overrides["temperature"]))
+    if "top_p" in overrides and overrides["top_p"] is not None:
+        llm = replace(llm, top_p=float(overrides["top_p"]))
+    if "top_k" in overrides and overrides["top_k"] is not None:
+        llm = replace(llm, top_k=int(overrides["top_k"]))
+    if "min_p" in overrides and overrides["min_p"] is not None:
+        llm = replace(llm, min_p=float(overrides["min_p"]))
+    if "presence_penalty" in overrides and overrides["presence_penalty"] is not None:
+        llm = replace(llm, presence_penalty=float(overrides["presence_penalty"]))
     if "capture_backend" in overrides and overrides["capture_backend"] is not None:
         capture = replace(capture, backend=str(overrides["capture_backend"]))
     if "mic_device" in overrides and overrides["mic_device"] is not None:
@@ -298,6 +347,18 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         llm = replace(llm, context_tokens=int(llm_table["context_tokens"]))
     if "reserve_tokens" in llm_table:
         llm = replace(llm, reserve_tokens=int(llm_table["reserve_tokens"]))
+    if "temperature" in llm_table:
+        llm = replace(llm, temperature=float(llm_table["temperature"]))
+    if "top_p" in llm_table:
+        llm = replace(llm, top_p=float(llm_table["top_p"]))
+    if "top_k" in llm_table:
+        llm = replace(llm, top_k=int(llm_table["top_k"]))
+    if "min_p" in llm_table:
+        llm = replace(llm, min_p=float(llm_table["min_p"]))
+    if "presence_penalty" in llm_table:
+        llm = replace(llm, presence_penalty=float(llm_table["presence_penalty"]))
+    profiles = _merge_profile_table(llm.profiles, _table(llm_table.get("profiles"), "llm.profiles"))
+    llm = replace(llm, profiles=profiles)
 
     capture_table = _table(data.get("capture"), "capture")
     if "backend" in capture_table:
@@ -350,6 +411,20 @@ def _apply_env(config: AppConfig, env: Mapping[str, str]) -> AppConfig:
     if not overrides:
         return config
     return apply_overrides(config, overrides)
+
+
+def _merge_profile_table(
+    current: dict[str, SamplingProfile],
+    table: Mapping[str, object],
+) -> dict[str, SamplingProfile]:
+    from meetscribe.llm.profiles import profile_from_table
+
+    merged = dict(current)
+    for name, raw in table.items():
+        if not isinstance(raw, Mapping):
+            raise ConfigError(f"[llm.profiles.{name}] must be a table")
+        merged[str(name)] = profile_from_table(raw, merged.get(str(name)))
+    return merged
 
 
 def _table(value: object, section: str) -> Mapping[str, object]:

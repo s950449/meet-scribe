@@ -26,6 +26,7 @@ def test_backends_human_and_json() -> None:
     assert "single-speaker" in human.stdout
     assert "recommended_asr:" in human.stdout
     assert "usable=" in human.stdout
+    assert "model:" in human.stdout
 
     payload = runner.invoke(app, ["--json-events", "backends"])
     assert payload.exit_code == 0

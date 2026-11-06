@@ -281,12 +281,26 @@ fallback_model = "qwen3.5-9b"
 polish = true
 context_tokens = 16384
 reserve_tokens = 2048
+# temperature = 0.2   # set under [llm] to override the matched profile
+
+[llm.profiles."gemma-4-12b-it"]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+min_p = 0.0
+
+[llm.profiles."qwen3.5-9b"]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
 
 [diarization]
 hf_token_env = "HF_TOKEN"
 ```
 
-`OPENAI_BASE_URL` still overrides `base_url` when you point at another OpenAI-compatible server (LM Studio, vLLM, or `https://api.openai.com/v1`). Set `OPENAI_API_KEY` for those servers. llama-server does not check a key; when the variable is unset the client sends the dummy value `llama-server`. In single-model mode llama-server also ignores the `model` field. `context_tokens` should be less than or equal to the server's `-c`. Transcripts that would exceed that budget, minus `reserve_tokens` and the system prompt, are polished and summarized in chunks, then the partial summaries are merged.
+`OPENAI_BASE_URL` still overrides `base_url` when you point at another OpenAI-compatible server (LM Studio, vLLM, or `https://api.openai.com/v1`). Set `OPENAI_API_KEY` for those servers. llama-server does not check a key; when the variable is unset the client sends the dummy value `llama-server`. In single-model mode llama-server also ignores the `model` field. `context_tokens` should be less than or equal to the server's `-c`. Transcripts that would exceed that budget, minus `reserve_tokens` and the system prompt, are polished and summarized in chunks, then the partial summaries are merged. Sampling comes from `[llm.profiles."<model>"]`. meetscribe asks `GET /v1/models` and uses the loaded alias when the server answers; otherwise it uses `model`. `--llm-model` skips that lookup. A sampling key written directly under `[llm]` replaces that one field from the profile.
 
 `transcribe` still skips the summary stage. Prompts ask for JSON, Traditional Chinese, and English technical terms kept in English. They live in `src/meetscribe/llm/prompts.py`.
 
@@ -294,18 +308,18 @@ hf_token_env = "HF_TOKEN"
 
 The default local model is **Gemma 4 12B** (instruct). When the machine cannot hold that GGUF plus the KV cache, switch the server to **Qwen 3.5 9B**. meetscribe does not swap models by itself: start `llama-server` with the file that fits, and keep `[llm].context_tokens` equal to `-c`.
 
-Confirmed Hugging Face repos (checked against the model cards, not guessed):
+Confirmed Unsloth GGUF repos (file pages and model cards, not guessed):
 
-| Role | Weights | GGUF |
-| --- | --- | --- |
-| Default | Gemma 4 12B IT. Native context **256K** tokens (`google/gemma-4-12B`). | [`ggml-org/gemma-4-12B-it-GGUF`](https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF), quant `Q4_K_M` (about 7.4 GB). Google's QAT build is [`google/gemma-4-12B-it-qat-q4_0-gguf`](https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf). |
-| Fallback | Qwen3.5-9B. Native context **262,144** tokens (`Qwen/Qwen3.5-9B`). | [`bartowski/Qwen_Qwen3.5-9B-GGUF`](https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF), file `Qwen3.5-9B-Q4_K_M.gguf` (about 6.2 GB). |
+| Role | Repo | Quant | File | Size |
+| --- | --- | --- | --- | --- |
+| Default | [`unsloth/gemma-4-12b-it-GGUF`](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF) | `UD-Q4_K_XL` | `gemma-4-12b-it-UD-Q4_K_XL.gguf` | **7.37 GB** |
+| Fallback | [`unsloth/Qwen3.5-9B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | `UD-Q4_K_XL` | `Qwen3.5-9B-UD-Q4_K_XL.gguf` | **5.97 GB** |
 
-`16384` is the meetscribe default, not the model maximum. A 12B Q4 plus a 256K cache does not fit a typical Intel iGPU. Raise `-c` and `context_tokens` together when you have the memory (32768 is a reasonable next step; the full 256K window needs a quantized KV cache and a lot of RAM).
+The repo id is `unsloth/gemma-4-12b-it-GGUF` (lowercase `12b`). Unsloth also publishes a separate QAT repo, `unsloth/gemma-4-12B-it-qat-GGUF`. The commands below use the instruct dynamic quant, which is the one the Gemma card's llama.cpp example loads. Native context is 256K for Gemma 4 12B (`google/gemma-4-12B`) and 262,144 for Qwen3.5-9B (`Qwen/Qwen3.5-9B`). `16384` stays the meetscribe default so the KV cache can sit beside a 4-bit 12B on an iGPU. Unsloth's own Gemma server snippet uses `-c 8192`; raise `-c` and `context_tokens` together if you have the memory.
 
-Both models use a Jinja chat template, and both can emit a thinking channel. For meeting notes, turn thinking off so the reply is JSON. The client still strips leftover `<think>…</think>` blocks and Gemma `<|channel>thought … <channel|>` blocks, and it ignores `reasoning_content`.
+Sampling profiles match the cards. Gemma 4 (also in the GGUF `general.sampling` metadata): temperature **1.0**, top_p **0.95**, top_k **64**. The card does not set `min_p`. Qwen3.5 non-thinking general tasks: temperature **0.7**, top_p **0.8**, top_k **20**, min_p **0.0**, presence_penalty **1.5**. `meetscribe backends` prints the model it will use and which profile matched. Thinking stays off for JSON notes.
 
-Shared server flags: `--jinja`, `--chat-template-kwargs '{"enable_thinking":false}'`, `--reasoning off`, `--no-mmproj` (text only; drop it if you want Gemma's audio/image projector), `-c 16384`, `-ngl 99` on a GPU.
+Gemma's Unsloth card says `-hf` downloads the mmproj automatically. Pass `--no-mmproj` for text-only meeting notes, or `--mmproj-url` ending in `mmproj-F16.gguf` to pin the projector. Qwen's Unsloth guide keeps vision in a separate `mmproj-F16.gguf` and does not pass it for text. Both cards want `--jinja`. Disable thinking with `--chat-template-kwargs '{"enable_thinking":false}'` and `--reasoning off`. The client still strips leftover `<think>` and `<|channel>thought` text.
 
 CPU, Gemma 4 12B:
 
@@ -313,10 +327,11 @@ CPU, Gemma 4 12B:
 cmake -B build
 cmake --build build --config Release -j
 ./build/bin/llama-server \
-  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  -hf unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL \
   --no-mmproj --jinja \
   --chat-template-kwargs '{"enable_thinking":false}' \
   --reasoning off \
+  --temp 1.0 --top-p 0.95 --top-k 64 \
   -c 16384 --host 127.0.0.1 --port 8080 \
   --alias gemma-4-12b-it
 ```
@@ -327,10 +342,11 @@ Metal (Apple Silicon). `GGML_METAL` is on by default in macOS builds; the flag i
 cmake -B build -DGGML_METAL=ON
 cmake --build build --config Release -j
 ./build/bin/llama-server \
-  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  -hf unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL \
   --no-mmproj --jinja \
   --chat-template-kwargs '{"enable_thinking":false}' \
   --reasoning off \
+  --temp 1.0 --top-p 0.95 --top-k 64 \
   -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
   --alias gemma-4-12b-it
 ```
@@ -341,10 +357,11 @@ Vulkan (Windows or Linux, including Intel iGPUs):
 cmake -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -j
 ./build/bin/llama-server \
-  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  -hf unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL \
   --no-mmproj --jinja \
   --chat-template-kwargs '{"enable_thinking":false}' \
   --reasoning off \
+  --temp 1.0 --top-p 0.95 --top-k 64 \
   -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
   --alias gemma-4-12b-it
 ```
@@ -356,27 +373,29 @@ source /opt/intel/oneapi/setvars.sh
 cmake -B build -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx
 cmake --build build --config Release -j
 ./build/bin/llama-server \
-  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  -hf unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL \
   --no-mmproj --jinja \
   --chat-template-kwargs '{"enable_thinking":false}' \
   --reasoning off \
+  --temp 1.0 --top-p 0.95 --top-k 64 \
   -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
   --alias gemma-4-12b-it
 ```
 
-Fallback when that GGUF does not fit. Same flags, smaller model. If `-hf` cannot resolve the quant tag, pass `-m` with `Qwen3.5-9B-Q4_K_M.gguf` from the bartowski repo.
+Fallback when the 7.37 GB Gemma quant does not fit. The Qwen profile is selected from the server alias, so you do not have to copy the numbers into `[llm]`. Text-only: do not pass Qwen's `mmproj-F16.gguf`.
 
 ```bash
 ./build/bin/llama-server \
-  -hf bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M \
+  -hf unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL \
   --jinja \
   --chat-template-kwargs '{"enable_thinking":false}' \
   --reasoning off \
+  --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0.0 \
   -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
   --alias qwen3.5-9b
 ```
 
-Set `[llm].model` to the alias you started (`gemma-4-12b-it` or `qwen3.5-9b`). A single-model server still answers even if the name does not match. Then `uv run meetscribe run meeting.wav`. The client calls `http://127.0.0.1:8080/v1/chat/completions`.
+Set `[llm].model` to the alias you started. A single-model server still answers if the name does not match. Then `uv run meetscribe run meeting.wav`. The client calls `http://127.0.0.1:8080/v1/chat/completions`.
 
 ## Add a backend
 
