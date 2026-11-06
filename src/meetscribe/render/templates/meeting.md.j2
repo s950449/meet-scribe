@@ -1,0 +1,51 @@
+# {{ title }}
+
+- **時間**：{{ started_at }}
+- **參與者**：{{ participants | join("、") if participants else "（未標註）" }}
+
+## 摘要
+
+{{ summary.overview }}
+
+### 重點
+
+{% if summary.key_points %}
+{% for item in summary.key_points %}
+- {{ item }}
+{% endfor %}
+{% else %}
+- （無）
+{% endif %}
+
+### 決議
+
+{% if summary.decisions %}
+{% for item in summary.decisions %}
+- {{ item }}
+{% endfor %}
+{% else %}
+- （無）
+{% endif %}
+
+### 待辦
+
+{% if action_items %}
+{% for item in action_items %}
+- {{ item }}
+{% endfor %}
+{% else %}
+- （無）
+{% endif %}
+
+## 逐字稿
+
+{% if turns %}
+{% for turn in turns %}
+### {{ turn.heading }}
+
+{{ turn.text }}
+
+{% endfor %}
+{% else %}
+（無逐字稿）
+{% endif %}

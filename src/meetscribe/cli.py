@@ -1,0 +1,320 @@
+"""Command line interface. Library entry points live in ``meetscribe.pipeline``."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Annotated, Optional
+
+import typer
+
+from meetscribe import __version__
+from meetscribe.config import load_config, parse_speaker_map
+from meetscribe.errors import MeetscribeError
+from meetscribe.events import ProgressEvent, StdioSink
+from meetscribe.hardware import detect_hardware, recommended_asr, recommended_capture
+from meetscribe.pipeline import record_audio, run_meeting, summarize_file
+from meetscribe.registry import build_registry
+
+app = typer.Typer(
+    help="Transcribe a meeting locally and write a Traditional Chinese summary.",
+    no_args_is_help=True,
+    add_completion=False,
+    pretty_exceptions_enable=False,
+)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    ctx: typer.Context,
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="TOML config file. Secrets stay in the environment."),
+    ] = None,
+    json_events: Annotated[
+        bool,
+        typer.Option("--json-events", help="Write JSONL progress events to stdout for a future GUI."),
+    ] = False,
+    version: Annotated[
+        Optional[bool],
+        typer.Option("--version", callback=_version_callback, is_eager=True, help="Print the version and exit."),
+    ] = None,
+) -> None:
+    """Local meeting capture, transcription, and summary."""
+
+    del version
+    ctx.ensure_object(dict)
+    ctx.obj["config_path"] = config
+    ctx.obj["json_events"] = json_events
+
+
+@app.command()
+def record(
+    ctx: typer.Context,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", "-o", help="Directory for mic.wav and system.wav."),
+    ] = Path("recording"),
+    duration: Annotated[
+        Optional[float],
+        typer.Option("--duration", "-d", help="Stop after this many seconds."),
+    ] = None,
+    backend: Annotated[
+        Optional[str],
+        typer.Option("--backend", help="Capture backend: auto, macos, windows, linux."),
+    ] = None,
+) -> None:
+    """Record microphone and system audio onto one timebase."""
+
+    def action(sink: StdioSink) -> None:
+        config = _config(ctx, capture_backend=backend)
+        record_audio(config, output_dir, duration_s=duration, sink=sink)
+
+    _guard(ctx, action)
+
+
+@app.command()
+def transcribe(
+    ctx: typer.Context,
+    source: Annotated[Path, typer.Argument(help="Mic audio file, or a directory with mic.wav.")],
+    system: Annotated[
+        Optional[Path],
+        typer.Option("--system", help="System-audio recording that starts with the mic file."),
+    ] = None,
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Markdown path. A JSON sidecar is written beside it."),
+    ] = None,
+    title: Annotated[Optional[str], typer.Option("--title", help="Meeting title.")] = None,
+    asr_backend: Annotated[Optional[str], typer.Option("--asr-backend", help="ASR backend name or auto.")] = None,
+    asr_model: Annotated[Optional[str], typer.Option("--asr-model", help="ASR checkpoint id.")] = None,
+    diarization: Annotated[
+        Optional[str],
+        typer.Option("--diarization", help="Diarization backend: auto, track, single-speaker, pyannote, sherpa-onnx."),
+    ] = None,
+    language: Annotated[Optional[str], typer.Option("--language", help="Whisper language code. Default zh.")] = None,
+    speaker: Annotated[
+        Optional[list[str]],
+        typer.Option("--speaker", "-s", help="Map a speaker id to a name, e.g. Me=林可安. Repeatable."),
+    ] = None,
+    base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
+    llm_model: Annotated[Optional[str], typer.Option("--llm-model", help="Model name sent to the endpoint.")] = None,
+    no_polish: Annotated[bool, typer.Option("--no-polish", help="Keep the raw ASR text.")] = False,
+    keep_audio: Annotated[bool, typer.Option("--keep-audio", help="Keep the 16 kHz wavs next to the note.")] = False,
+) -> None:
+    """Transcribe audio, assign speakers, and optionally polish. Does not summarize."""
+
+    def action(sink: StdioSink) -> None:
+        config = _config(
+            ctx,
+            asr_backend=asr_backend,
+            asr_model=asr_model,
+            diarization_backend=diarization,
+            language=language,
+            llm_base_url=base_url,
+            llm_model=llm_model,
+            llm_polish=False if no_polish else None,
+            speaker_map=parse_speaker_map(speaker) if speaker else None,
+        )
+        result = run_meeting(
+            config,
+            mic=source,
+            system=system,
+            output=output,
+            title=title,
+            sink=sink,
+            do_summary=False,
+            do_polish=not no_polish,
+            keep_audio=keep_audio,
+        )
+        if not sink.json_events:
+            sink.emit(
+                ProgressEvent(
+                    stage="write",
+                    event="log",
+                    message=f"JSON sidecar: {result.json_path}",
+                )
+            )
+
+    _guard(ctx, action)
+
+
+@app.command()
+def summarize(
+    ctx: typer.Context,
+    source: Annotated[Path, typer.Argument(help="Meeting JSON written by transcribe or run.")],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Markdown path. Defaults to the JSON stem."),
+    ] = None,
+    speaker: Annotated[
+        Optional[list[str]],
+        typer.Option("--speaker", "-s", help="Map a speaker id to a name. Repeatable."),
+    ] = None,
+    base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
+    llm_model: Annotated[Optional[str], typer.Option("--llm-model", help="Model name sent to the endpoint.")] = None,
+) -> None:
+    """Summarize a transcript JSON file and rewrite the Markdown note."""
+
+    def action(sink: StdioSink) -> None:
+        config = _config(
+            ctx,
+            llm_base_url=base_url,
+            llm_model=llm_model,
+            speaker_map=parse_speaker_map(speaker) if speaker else None,
+        )
+        summarize_file(config, source, output=output, sink=sink)
+
+    _guard(ctx, action)
+
+
+@app.command()
+def run(
+    ctx: typer.Context,
+    source: Annotated[
+        Optional[Path],
+        typer.Argument(help="Mic audio, or a session directory. Omit to record first."),
+    ] = None,
+    system: Annotated[Optional[Path], typer.Option("--system", help="System-audio file.")] = None,
+    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Markdown path.")] = None,
+    output_dir: Annotated[
+        Optional[Path],
+        typer.Option("--output-dir", help="Recording directory, used when no audio file is given."),
+    ] = None,
+    title: Annotated[Optional[str], typer.Option("--title", help="Meeting title.")] = None,
+    duration: Annotated[Optional[float], typer.Option("--duration", "-d", help="Recording length in seconds.")] = None,
+    asr_backend: Annotated[Optional[str], typer.Option("--asr-backend")] = None,
+    asr_model: Annotated[Optional[str], typer.Option("--asr-model")] = None,
+    diarization: Annotated[Optional[str], typer.Option("--diarization")] = None,
+    language: Annotated[Optional[str], typer.Option("--language")] = None,
+    speaker: Annotated[Optional[list[str]], typer.Option("--speaker", "-s")] = None,
+    capture_backend: Annotated[Optional[str], typer.Option("--capture-backend")] = None,
+    base_url: Annotated[Optional[str], typer.Option("--base-url")] = None,
+    llm_model: Annotated[Optional[str], typer.Option("--llm-model")] = None,
+    no_polish: Annotated[bool, typer.Option("--no-polish")] = False,
+    keep_audio: Annotated[bool, typer.Option("--keep-audio")] = False,
+) -> None:
+    """Record or load audio, then transcribe, polish, and summarize."""
+
+    def action(sink: StdioSink) -> None:
+        config = _config(
+            ctx,
+            asr_backend=asr_backend,
+            asr_model=asr_model,
+            diarization_backend=diarization,
+            language=language,
+            capture_backend=capture_backend,
+            llm_base_url=base_url,
+            llm_model=llm_model,
+            llm_polish=False if no_polish else None,
+            speaker_map=parse_speaker_map(speaker) if speaker else None,
+        )
+        mic = source
+        if mic is None:
+            directory = output_dir or Path("recording")
+            record_audio(config, directory, duration_s=duration, sink=sink)
+            mic = directory
+        run_meeting(
+            config,
+            mic=mic,
+            system=system,
+            output=output,
+            title=title,
+            sink=sink,
+            do_polish=not no_polish,
+            do_summary=True,
+            keep_audio=keep_audio,
+        )
+
+    _guard(ctx, action)
+
+
+@app.command()
+def backends(ctx: typer.Context) -> None:
+    """List backends and the hardware defaults for this machine."""
+
+    hardware = detect_hardware()
+    registry = build_registry()
+    payload = {
+        "hardware": {
+            "system": hardware.system,
+            "machine": hardware.machine,
+            "apple_silicon": hardware.apple_silicon,
+            "intel_cpu": hardware.intel_cpu,
+            "intel_igpu": hardware.intel_igpu,
+            "recommended_asr": recommended_asr(hardware),
+            "recommended_capture": recommended_capture(hardware),
+            "diarization": "track if two tracks else single-speaker",
+        },
+        "backends": [
+            {
+                "kind": spec.kind,
+                "name": spec.name,
+                "description": spec.description,
+                "device": spec.device,
+                "implemented": spec.implemented,
+                "dependency_present": spec.dependency_present(),
+                "extra": spec.extra,
+                "platforms": list(spec.platforms),
+            }
+            for spec in registry.list()
+        ],
+    }
+    if ctx.obj.get("json_events"):
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(_format_backends(payload))
+
+
+def _config(ctx: typer.Context, **overrides: object):
+    cleaned = {key: value for key, value in overrides.items() if value is not None}
+    return load_config(ctx.obj.get("config_path"), overrides=cleaned)
+
+
+def _guard(ctx: typer.Context, action) -> None:
+    sink = StdioSink(json_events=bool(ctx.obj.get("json_events")))
+    try:
+        action(sink)
+    except MeetscribeError as exc:
+        sink.emit(ProgressEvent(stage="pipeline", event="error", status="error", message=str(exc)))
+        raise typer.Exit(code=1) from exc
+
+
+def _format_backends(payload: dict) -> str:
+    hardware = payload["hardware"]
+    igpu = hardware["intel_igpu"]
+    igpu_text = "unknown" if igpu is None else ("yes" if igpu else "no")
+    lines = [
+        "Hardware",
+        f"  system: {hardware['system']}",
+        f"  machine: {hardware['machine']}",
+        f"  apple_silicon: {'yes' if hardware['apple_silicon'] else 'no'}",
+        f"  intel_cpu: {'yes' if hardware['intel_cpu'] else 'no'}",
+        f"  intel_igpu: {igpu_text}",
+        f"  recommended_asr: {hardware['recommended_asr']}",
+        f"  recommended_capture: {hardware['recommended_capture']}",
+        f"  diarization: {hardware['diarization']}",
+    ]
+    current = None
+    for spec in payload["backends"]:
+        if spec["kind"] != current:
+            current = spec["kind"]
+            lines.append("")
+            lines.append(current)
+        state = "implemented" if spec["implemented"] else "stub"
+        if spec["extra"] is None and not spec["implemented"]:
+            dep = "dep=n/a"
+        elif spec["dependency_present"]:
+            dep = "dep=yes"
+        else:
+            dep = "dep=no"
+        extra = f"  extra={spec['extra']}" if spec["extra"] else ""
+        lines.append(f"  {spec['name']:<16} {state:<12} {dep:<8} device={spec['device']}{extra}")
+        lines.append(f"    {spec['description']}")
+    return "\n".join(lines)

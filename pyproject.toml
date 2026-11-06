@@ -1,0 +1,51 @@
+[project]
+name = "meetscribe"
+version = "0.1.0"
+description = "Local, cross-platform meeting transcription and summarization"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "meetscribe contributors" }]
+keywords = ["asr", "diarization", "meetings", "whisper", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "jinja2>=3.1",
+    "numpy>=1.26",
+    "openai>=1.40",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+faster-whisper = ["faster-whisper>=1.0.3"]
+mlx = ["mlx-whisper>=0.4.1"]
+openvino = ["openvino-genai>=2024.4.0"]
+whisper-cpp = ["pywhispercpp>=1.2.0"]
+diarization = ["pyannote.audio>=3.3"]
+sherpa = ["sherpa-onnx>=1.10"]
+audio = ["soundfile>=0.12"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+meetscribe = "meetscribe.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+artifacts = [
+    "src/meetscribe/py.typed",
+    "src/meetscribe/render/templates/*.j2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
