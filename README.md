@@ -54,11 +54,16 @@ Other extras, installed on the machine that will actually run them:
 | dev group | `uv sync` installs it | pytest |
 | `sherpa` | `uv sync --extra sherpa` | still a stub |
 
-m4a and mp3 need ffmpeg. Convert first, then point the CLI at the wav:
+m4a, mp3, and other formats unsupported by the built-in WAV reader or optional
+soundfile reader are decoded automatically when `ffmpeg` is on `PATH`:
 
 ```bash
-ffmpeg -i meeting.m4a -ac 1 -ar 16000 meeting.wav
+meetscribe transcribe meeting.m4a --no-polish -o notes/meeting.md
 ```
+
+The original file is preserved. Decoding uses a temporary 16 kHz mono WAV that
+is removed afterward. If ffmpeg is missing or cannot decode an audio stream,
+the command reports the problem rather than treating the file as silence.
 
 ## Commands
 
