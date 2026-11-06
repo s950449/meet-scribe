@@ -82,6 +82,16 @@ meetscribe --json-events run mic.wav -o notes/weekly.md
 
 `transcribe` writes the transcript and skips the summary. `summarize` reads the JSON sidecar and rewrites the Markdown. `run` does both. `record` captures until Ctrl+C, or until `--duration` seconds. `--live` prints partial segments while the take is running; the finished wavs are still what diarization and the Markdown note use.
 
+### Control and monitor recording
+
+In an interactive terminal, press `p` to pause or continue and `q` to finish;
+Ctrl+C also finishes. Both tracks omit paused time, and `--duration` counts only
+active recording time. The terminal reports recording status and per-track
+levels, with warnings for sustained silence or missing audio buffers.
+
+Noninteractive input and `--json-events` do not read keyboard commands. JSON
+events expose recording status, levels, and warnings for an external UI.
+
 Recording writes `mic.wav`, `system.wav`, and `session.json`. The JSON counts silence inserted and samples dropped while the two device clocks were pulled onto `time.monotonic()`. Both files are padded to the same length. Capture is 48 kHz; the pipeline resamples to 16 kHz before ASR.
 
 Speaker ids stay anonymous until you map them. The track diarizer uses the role ids `Me` and `Remote`. A single mixed file uses `SPEAKER_00`. Pass `--speaker SPEAKER_00=陳怡君` or put the same pairs under `[speakers]` in the config file.
