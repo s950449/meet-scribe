@@ -3,11 +3,13 @@ from pathlib import Path
 import pytest
 
 from meetscribe.asr.faster_whisper import resolve_ct2_model
-from meetscribe.asr.stubs import MlxWhisperAsr, OpenVINOWhisperAsr, WhisperCppAsr
+from meetscribe.asr.mlx_whisper import MlxWhisperAsr
+from meetscribe.asr.openvino_backend import OpenVINOWhisperAsr
+from meetscribe.asr.vulkan import VulkanWhisperAsr
 from meetscribe.config import AppConfig
+from meetscribe.diarization.pyannote import PyannoteDiarizer
 from meetscribe.diarization.simple import SingleSpeakerDiarizer, TrackDiarizer
-from meetscribe.diarization.stubs import PyannoteDiarizer
-from meetscribe.errors import BackendNotImplemented, BackendNotInstalled, UnknownBackend
+from meetscribe.errors import BackendNotInstalled, ModelMissing, UnknownBackend
 from meetscribe.hardware import (
     HardwareInfo,
     detect_intel_igpu,
@@ -33,13 +35,26 @@ def _hardware(**overrides: object) -> HardwareInfo:
 
 def test_registry_lists_planned_backends() -> None:
     registry = build_registry()
-    assert registry.names("asr") == ["faster-whisper", "mlx-whisper", "openvino", "whisper.cpp"]
+    assert registry.names("asr") == ["faster-whisper", "mlx-whisper", "openvino", "vulkan", "whisper.cpp"]
     assert registry.names("diarization") == ["track", "single-speaker", "pyannote", "sherpa-onnx"]
     assert registry.names("capture") == ["file", "macos", "windows", "linux"]
     implemented = {spec.name for spec in registry.list() if spec.implemented}
-    assert {"faster-whisper", "track", "single-speaker", "file"} <= implemented
+    assert {
+        "faster-whisper",
+        "mlx-whisper",
+        "openvino",
+        "vulkan",
+        "whisper.cpp",
+        "pyannote",
+        "track",
+        "single-speaker",
+        "file",
+        "macos",
+        "windows",
+        "linux",
+    } <= implemented
     stubs = {spec.name for spec in registry.list() if not spec.implemented}
-    assert {"mlx-whisper", "openvino", "whisper.cpp", "pyannote", "sherpa-onnx", "macos"} <= stubs
+    assert stubs == {"sherpa-onnx"}
 
 
 def test_unknown_backend() -> None:
@@ -121,27 +136,30 @@ def test_simple_diarizers(tmp_path: Path) -> None:
     ]
 
 
-def test_stubs_lazy_import_and_not_implemented(tmp_path: Path) -> None:
+def test_optional_backends_fail_clearly_without_weights_or_packages(tmp_path: Path) -> None:
     track = AudioTrack("mic", tmp_path / "mic.wav", 16000, 1, 1.0)
     with pytest.raises(BackendNotInstalled):
-        MlxWhisperAsr(model="MediaTek-Research/Breeze-ASR-25", fallback_model="openai/whisper-large-v3-turbo").transcribe(
+        MlxWhisperAsr(
+            model="MediaTek-Research/Breeze-ASR-25",
+            fallback_model="openai/whisper-large-v3-turbo",
+        ).transcribe(tmp_path / "mic.wav", track_id="mic")
+    with pytest.raises(ModelMissing):
+        OpenVINOWhisperAsr(model="m", fallback_model="f", model_dir=tmp_path).transcribe(
+            tmp_path / "mic.wav",
+            track_id="mic",
+        )
+    with pytest.raises(ModelMissing):
+        VulkanWhisperAsr(model="m", fallback_model="f", model_dir=tmp_path).transcribe(
             tmp_path / "mic.wav",
             track_id="mic",
         )
     with pytest.raises(BackendNotInstalled):
-        OpenVINOWhisperAsr(model="m", fallback_model="f").transcribe(tmp_path / "mic.wav", track_id="mic")
-    with pytest.raises(BackendNotInstalled):
-        WhisperCppAsr(model="m", fallback_model="f").transcribe(tmp_path / "mic.wav", track_id="mic")
-    with pytest.raises(BackendNotInstalled):
         PyannoteDiarizer(hf_token=None).diarize([track])
 
 
-def test_pyannote_stub_reports_missing_implementation_when_token_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The package is absent in the skeleton environment, so the lazy import fails
-    # before the token check. This locks that order.
-    monkeypatch.setenv("HF_TOKEN", "hf-test")
+def test_pyannote_without_the_package_reports_the_extra(tmp_path: Path) -> None:
     track = AudioTrack("mic", tmp_path / "mic.wav", 16000, 1, 1.0)
-    with pytest.raises((BackendNotInstalled, BackendNotImplemented)):
+    with pytest.raises(BackendNotInstalled, match="pyannote"):
         PyannoteDiarizer(hf_token="hf-test").diarize([track])
 
 

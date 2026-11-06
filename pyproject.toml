@@ -1,6 +1,6 @@
 [project]
 name = "meetscribe"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local, cross-platform meeting transcription and summarization"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,10 +26,14 @@ dependencies = [
 faster-whisper = ["faster-whisper>=1.0.3"]
 mlx = ["mlx-whisper>=0.4.1"]
 openvino = ["openvino-genai>=2024.4.0"]
+vulkan = ["pywhispercpp>=1.2.0"]
 whisper-cpp = ["pywhispercpp>=1.2.0"]
 diarization = ["pyannote.audio>=3.3"]
 sherpa = ["sherpa-onnx>=1.10"]
 audio = ["soundfile>=0.12"]
+capture-linux = ["sounddevice>=0.5"]
+capture-macos = ["sounddevice>=0.5"]
+capture-windows = ["PyAudioWPatch>=0.2.12"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

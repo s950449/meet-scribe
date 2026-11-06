@@ -7,11 +7,14 @@
 output_dir = "~/Meetings"
 
 [asr]
-backend = "auto" # auto | faster-whisper | mlx-whisper | openvino | whisper.cpp
+backend = "auto" # auto | faster-whisper | mlx-whisper | openvino | vulkan | whisper.cpp
 model = "MediaTek-Research/Breeze-ASR-25"
 fallback_model = "openai/whisper-large-v3-turbo"
 language = "zh"
 device = "auto"
+openvino_device = "auto" # auto | GPU | CPU
+# model_dir = "~/.cache/meetscribe/models"
+# whisper_cpp_bin = "" # or set MEETSCRIBE_WHISPER_CPP
 
 [diarization]
 backend = "auto" # auto | track | single-speaker | pyannote | sherpa-onnx
@@ -25,6 +28,10 @@ polish = true
 
 [capture]
 backend = "auto" # auto | file | macos | windows | linux
+sample_rate = 48000
+chunk_seconds = 5.0
+# mic_device = ""
+# system_device = ""
 
 [speakers]
 # Me = "林可安"

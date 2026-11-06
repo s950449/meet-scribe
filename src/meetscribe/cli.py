@@ -12,8 +12,10 @@ from meetscribe import __version__
 from meetscribe.config import load_config, parse_speaker_map
 from meetscribe.errors import MeetscribeError
 from meetscribe.events import ProgressEvent, StdioSink
+from meetscribe.audio.devices import parse_pactl_short
 from meetscribe.hardware import detect_hardware, recommended_asr, recommended_capture
 from meetscribe.pipeline import record_audio, run_meeting, summarize_file
+from meetscribe.probe import describe_backend
 from meetscribe.registry import build_registry
 
 app = typer.Typer(
@@ -69,12 +71,36 @@ def record(
         Optional[str],
         typer.Option("--backend", help="Capture backend: auto, macos, windows, linux."),
     ] = None,
+    mic_device: Annotated[Optional[str], typer.Option("--mic-device", help="Microphone name or index.")] = None,
+    system_device: Annotated[
+        Optional[str],
+        typer.Option("--system-device", help="Monitor source or WASAPI loopback name."),
+    ] = None,
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Transcribe chunks while recording. The final note still uses the full files."),
+    ] = False,
+    chunk_seconds: Annotated[
+        Optional[float],
+        typer.Option("--chunk-seconds", help="Live transcription chunk length. Default 5."),
+    ] = None,
+    list_devices: Annotated[bool, typer.Option("--list-devices", help="Print capture devices and exit.")] = False,
 ) -> None:
-    """Record microphone and system audio onto one timebase."""
+    """Record microphone and system audio onto one timebase. Ctrl+C stops."""
+
+    if list_devices:
+        typer.echo(_device_report())
+        return
 
     def action(sink: StdioSink) -> None:
-        config = _config(ctx, capture_backend=backend)
-        record_audio(config, output_dir, duration_s=duration, sink=sink)
+        config = _config(
+            ctx,
+            capture_backend=backend,
+            mic_device=mic_device,
+            system_device=system_device,
+            chunk_seconds=chunk_seconds,
+        )
+        record_audio(config, output_dir, duration_s=duration, live=live, sink=sink)
 
     _guard(ctx, action)
 
@@ -199,6 +225,10 @@ def run(
     llm_model: Annotated[Optional[str], typer.Option("--llm-model")] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish")] = False,
     keep_audio: Annotated[bool, typer.Option("--keep-audio")] = False,
+    live: Annotated[bool, typer.Option("--live", help="Stream chunk transcripts while recording.")] = False,
+    mic_device: Annotated[Optional[str], typer.Option("--mic-device")] = None,
+    system_device: Annotated[Optional[str], typer.Option("--system-device")] = None,
+    chunk_seconds: Annotated[Optional[float], typer.Option("--chunk-seconds")] = None,
 ) -> None:
     """Record or load audio, then transcribe, polish, and summarize."""
 
@@ -214,11 +244,14 @@ def run(
             llm_model=llm_model,
             llm_polish=False if no_polish else None,
             speaker_map=parse_speaker_map(speaker) if speaker else None,
+            mic_device=mic_device,
+            system_device=system_device,
+            chunk_seconds=chunk_seconds,
         )
         mic = source
         if mic is None:
             directory = output_dir or Path("recording")
-            record_audio(config, directory, duration_s=duration, sink=sink)
+            record_audio(config, directory, duration_s=duration, live=live, sink=sink)
             mic = directory
         run_meeting(
             config,
@@ -236,6 +269,13 @@ def run(
 
 
 @app.command()
+def devices() -> None:
+    """List microphones and system-audio sources for this machine."""
+
+    typer.echo(_device_report())
+
+
+@app.command()
 def backends(ctx: typer.Context) -> None:
     """List backends and the hardware defaults for this machine."""
 
@@ -250,6 +290,7 @@ def backends(ctx: typer.Context) -> None:
             "intel_igpu": hardware.intel_igpu,
             "recommended_asr": recommended_asr(hardware),
             "recommended_capture": recommended_capture(hardware),
+            "vulkan_gpu": hardware.vulkan_gpu,
             "diarization": "track if two tracks else single-speaker",
         },
         "backends": [
@@ -258,12 +299,16 @@ def backends(ctx: typer.Context) -> None:
                 "name": spec.name,
                 "description": spec.description,
                 "device": spec.device,
-                "implemented": spec.implemented,
-                "dependency_present": spec.dependency_present(),
+                "implemented": status.implemented,
+                "dependency_present": status.dependency_present,
+                "platform_ok": status.platform_ok,
+                "usable": status.usable,
+                "reason": status.reason,
                 "extra": spec.extra,
                 "platforms": list(spec.platforms),
             }
             for spec in registry.list()
+            for status in (describe_backend(spec, hardware),)
         ],
     }
     if ctx.obj.get("json_events"):
@@ -297,6 +342,7 @@ def _format_backends(payload: dict) -> str:
         f"  apple_silicon: {'yes' if hardware['apple_silicon'] else 'no'}",
         f"  intel_cpu: {'yes' if hardware['intel_cpu'] else 'no'}",
         f"  intel_igpu: {igpu_text}",
+        f"  vulkan_gpu: {'yes' if hardware.get('vulkan_gpu') else 'no'}",
         f"  recommended_asr: {hardware['recommended_asr']}",
         f"  recommended_capture: {hardware['recommended_capture']}",
         f"  diarization: {hardware['diarization']}",
@@ -308,13 +354,62 @@ def _format_backends(payload: dict) -> str:
             lines.append("")
             lines.append(current)
         state = "implemented" if spec["implemented"] else "stub"
-        if spec["extra"] is None and not spec["implemented"]:
-            dep = "dep=n/a"
-        elif spec["dependency_present"]:
-            dep = "dep=yes"
-        else:
-            dep = "dep=no"
+        usable = "usable=yes" if spec["usable"] else "usable=no"
         extra = f"  extra={spec['extra']}" if spec["extra"] else ""
-        lines.append(f"  {spec['name']:<16} {state:<12} {dep:<8} device={spec['device']}{extra}")
+        lines.append(f"  {spec['name']:<16} {state:<12} {usable:<12} device={spec['device']}{extra}")
         lines.append(f"    {spec['description']}")
+        lines.append(f"    {spec['reason']}")
+    return "\n".join(lines)
+
+
+def _device_report() -> str:
+    import platform
+    import shutil
+    import subprocess
+
+    system = platform.system()
+    lines = [f"Capture devices ({system})"]
+    if system == "Linux":
+        pactl = shutil.which("pactl")
+        if pactl is None:
+            lines.append("  pactl is not installed. Install PipeWire or PulseAudio, then pip install 'meetscribe[capture-linux]'.")
+            return "\n".join(lines)
+        completed = subprocess.run(
+            [pactl, "list", "short", "sources"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if completed.returncode != 0:
+            lines.append(completed.stderr.strip() or "pactl failed")
+            return "\n".join(lines)
+        sources = parse_pactl_short(completed.stdout)
+        if not sources:
+            lines.append("  No PulseAudio/PipeWire sources.")
+        for source in sources:
+            lines.append(f"  {source.kind:<8} {source.id:>4}  {source.name}")
+        lines.append("  Record with pip install 'meetscribe[capture-linux]'. Ctrl+C stops.")
+        return "\n".join(lines)
+    if system == "Windows":
+        lines.append("  WASAPI devices come from PyAudioWPatch.")
+        lines.append("  pip install 'meetscribe[capture-windows]'")
+        try:
+            from meetscribe.audio.windows import list_wasapi_devices
+
+            found, default_input, default_output = list_wasapi_devices()
+        except Exception as exc:
+            lines.append(f"  {exc}")
+            return "\n".join(lines)
+        lines.append(f"  default input: {default_input or '(none)'}")
+        lines.append(f"  default output: {default_output or '(none)'}")
+        for device in found:
+            lines.append(f"  {device.kind:<8} {device.id:>4}  {device.name}")
+        return "\n".join(lines)
+    if system == "Darwin":
+        lines.append("  System audio is ScreenCaptureKit via scripts/macos/SystemAudioCapture.swift.")
+        lines.append("  Microphones are Core Audio inputs. pip install 'meetscribe[capture-macos]'")
+        lines.append("  swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift")
+        return "\n".join(lines)
+    lines.append("  No capture backend for this operating system. Transcribe existing wav files.")
     return "\n".join(lines)

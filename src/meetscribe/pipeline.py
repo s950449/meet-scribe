@@ -50,11 +50,12 @@ def record_audio(
     output_dir: Path,
     *,
     duration_s: float | None = None,
+    live: bool = False,
     sink: EventSink | None = None,
     registry: Registry | None = None,
     hardware: HardwareInfo | None = None,
 ) -> Path:
-    """Record mic and system audio. Platform backends are still stubs."""
+    """Record mic and system audio onto one host-clock timeline."""
 
     events = sink or _Null()
     reg = registry or build_registry()
@@ -71,12 +72,26 @@ def record_audio(
         stage_event(
             "capture",
             "start",
-            message=f"Recording with {name}",
+            message=f"Recording with {name}. Ctrl+C stops.",
             backend=name,
             duration_s=duration_s,
         )
     )
-    capture.record(output_dir, duration_s=duration_s, on_event=events.emit)  # type: ignore[attr-defined]
+    on_chunk = None
+    if live:
+        from meetscribe.audio.live import make_live_callback
+
+        asr_name = reg.resolve_asr(config.asr.backend, hw)
+        asr = reg.create("asr", asr_name, config)
+        sample_rate = int(getattr(capture, "sample_rate", config.capture.sample_rate))
+        on_chunk = make_live_callback(asr, language_hint(config.asr.language), events, sample_rate)
+        events.emit(log_event("live", f"Live transcription with {asr_name} every {config.capture.chunk_seconds:g}s"))
+    capture.record(  # type: ignore[attr-defined]
+        output_dir,
+        duration_s=duration_s,
+        on_event=events.emit,
+        on_chunk=on_chunk,
+    )
     events.emit(stage_event("capture", "done", message=f"Saved audio to {output_dir}"))
     return output_dir
 

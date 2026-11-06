@@ -7,6 +7,7 @@ does not load a GPU driver. ``None`` means the probe could not decide.
 from __future__ import annotations
 
 import platform
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,7 @@ class HardwareInfo:
     apple_silicon: bool
     intel_cpu: bool
     intel_igpu: bool | None
+    vulkan_gpu: bool = False
 
 
 def recommended_asr(info: HardwareInfo) -> str:
@@ -78,6 +80,17 @@ def detect_intel_igpu(sysfs: Path | None = None) -> bool | None:
     return False
 
 
+def detect_vulkan_loader() -> bool:
+    """Return True when a Vulkan loader or ICD is visible. This is not a GPU benchmark."""
+
+    if shutil.which("vulkaninfo"):
+        return True
+    icd = Path("/usr/share/vulkan/icd.d")
+    if icd.is_dir() and any(icd.glob("*.json")):
+        return True
+    return False
+
+
 def detect_hardware() -> HardwareInfo:
     system = platform.system()
     machine = platform.machine().lower()
@@ -91,4 +104,5 @@ def detect_hardware() -> HardwareInfo:
         apple_silicon=apple_silicon,
         intel_cpu=intel_cpu,
         intel_igpu=intel_igpu,
+        vulkan_gpu=detect_vulkan_loader(),
     )

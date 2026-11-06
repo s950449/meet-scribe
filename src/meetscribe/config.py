@@ -27,6 +27,9 @@ class AsrSettings:
     fallback_model: str = DEFAULT_FALLBACK_MODEL
     language: str = "zh"
     device: str = "auto"
+    openvino_device: str = "auto"
+    model_dir: str = ""
+    whisper_cpp_bin: str = ""
 
 
 @dataclass
@@ -46,6 +49,10 @@ class LlmSettings:
 @dataclass
 class CaptureSettings:
     backend: str = "auto"
+    sample_rate: int = 48_000
+    mic_device: str = ""
+    system_device: str = ""
+    chunk_seconds: float = 5.0
 
 
 @dataclass
@@ -141,6 +148,12 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
         asr = replace(asr, device=str(overrides["asr_device"]))
     if "language" in overrides and overrides["language"] is not None:
         asr = replace(asr, language=str(overrides["language"]))
+    if "openvino_device" in overrides and overrides["openvino_device"] is not None:
+        asr = replace(asr, openvino_device=str(overrides["openvino_device"]))
+    if "model_dir" in overrides and overrides["model_dir"] is not None:
+        asr = replace(asr, model_dir=str(overrides["model_dir"]))
+    if "whisper_cpp_bin" in overrides and overrides["whisper_cpp_bin"] is not None:
+        asr = replace(asr, whisper_cpp_bin=str(overrides["whisper_cpp_bin"]))
     if "diarization_backend" in overrides and overrides["diarization_backend"] is not None:
         diar = replace(diar, backend=str(overrides["diarization_backend"]))
     if "llm_base_url" in overrides and overrides["llm_base_url"] is not None:
@@ -151,6 +164,14 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
         llm = replace(llm, polish=bool(overrides["llm_polish"]))
     if "capture_backend" in overrides and overrides["capture_backend"] is not None:
         capture = replace(capture, backend=str(overrides["capture_backend"]))
+    if "mic_device" in overrides and overrides["mic_device"] is not None:
+        capture = replace(capture, mic_device=str(overrides["mic_device"]))
+    if "system_device" in overrides and overrides["system_device"] is not None:
+        capture = replace(capture, system_device=str(overrides["system_device"]))
+    if "chunk_seconds" in overrides and overrides["chunk_seconds"] is not None:
+        capture = replace(capture, chunk_seconds=float(overrides["chunk_seconds"]))
+    if "sample_rate" in overrides and overrides["sample_rate"] is not None:
+        capture = replace(capture, sample_rate=int(overrides["sample_rate"]))
     if "output_dir" in overrides and overrides["output_dir"] is not None:
         output_dir = Path(str(overrides["output_dir"])).expanduser()
     if "speaker_map" in overrides and overrides["speaker_map"] is not None:
@@ -226,6 +247,12 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         asr = replace(asr, language=str(asr_table["language"]))
     if "device" in asr_table:
         asr = replace(asr, device=str(asr_table["device"]))
+    if "openvino_device" in asr_table:
+        asr = replace(asr, openvino_device=str(asr_table["openvino_device"]))
+    if "model_dir" in asr_table:
+        asr = replace(asr, model_dir=str(asr_table["model_dir"]))
+    if "whisper_cpp_bin" in asr_table:
+        asr = replace(asr, whisper_cpp_bin=str(asr_table["whisper_cpp_bin"]))
 
     diar_table = _table(data.get("diarization"), "diarization")
     if "backend" in diar_table:
@@ -249,6 +276,14 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
     capture_table = _table(data.get("capture"), "capture")
     if "backend" in capture_table:
         capture = replace(capture, backend=str(capture_table["backend"]))
+    if "sample_rate" in capture_table:
+        capture = replace(capture, sample_rate=int(capture_table["sample_rate"]))
+    if "mic_device" in capture_table:
+        capture = replace(capture, mic_device=str(capture_table["mic_device"]))
+    if "system_device" in capture_table:
+        capture = replace(capture, system_device=str(capture_table["system_device"]))
+    if "chunk_seconds" in capture_table:
+        capture = replace(capture, chunk_seconds=float(capture_table["chunk_seconds"]))
 
     speakers = _table(data.get("speakers"), "speakers")
     for key, value in speakers.items():
@@ -276,6 +311,16 @@ def _apply_env(config: AppConfig, env: Mapping[str, str]) -> AppConfig:
         overrides["llm_base_url"] = env["OPENAI_BASE_URL"]
     if env.get("MEETSCRIBE_LLM_MODEL"):
         overrides["llm_model"] = env["MEETSCRIBE_LLM_MODEL"]
+    if env.get("MEETSCRIBE_MODEL_DIR"):
+        overrides["model_dir"] = env["MEETSCRIBE_MODEL_DIR"]
+    if env.get("MEETSCRIBE_WHISPER_CPP"):
+        overrides["whisper_cpp_bin"] = env["MEETSCRIBE_WHISPER_CPP"]
+    if env.get("MEETSCRIBE_OPENVINO_DEVICE"):
+        overrides["openvino_device"] = env["MEETSCRIBE_OPENVINO_DEVICE"]
+    if env.get("MEETSCRIBE_MIC_DEVICE"):
+        overrides["mic_device"] = env["MEETSCRIBE_MIC_DEVICE"]
+    if env.get("MEETSCRIBE_SYSTEM_DEVICE"):
+        overrides["system_device"] = env["MEETSCRIBE_SYSTEM_DEVICE"]
     if not overrides:
         return config
     return apply_overrides(config, overrides)

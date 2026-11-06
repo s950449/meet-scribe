@@ -27,3 +27,7 @@ class BackendNotImplemented(MeetscribeError):
 
 class LlmError(MeetscribeError):
     """The OpenAI-compatible endpoint failed or returned unusable output."""
+
+
+class ModelMissing(MeetscribeError):
+    """A converted checkpoint is not on disk yet."""

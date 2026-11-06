@@ -46,8 +46,9 @@ class FileInput:
         *,
         duration_s: float | None = None,
         on_event: Callable[[ProgressEvent], None] | None = None,
+        on_chunk: Callable[..., None] | None = None,
     ) -> CaptureResult:
-        del output_dir, duration_s, on_event
+        del output_dir, duration_s, on_event, on_chunk
         pairs = self._tracks()
         started = self.started_at or _mtime_or_now(pairs[0][1])
         tracks: list[AudioTrack] = []

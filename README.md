@@ -8,19 +8,18 @@ meetscribe records a meeting as separate microphone and system tracks, transcrib
 
 | Piece | Status |
 | --- | --- |
-| `FileInput` (existing wav files, or a directory with `mic.wav` / `system.wav`) | Implemented |
-| Resample to 16 kHz mono PCM | Implemented |
-| `faster-whisper` ASR | Implemented, optional extra `faster-whisper` |
-| `mlx-whisper`, OpenVINO GenAI, whisper.cpp | Stubs with lazy imports |
-| `track` diarizer (mic = `Me`, system = `Remote`) and `single-speaker` | Implemented |
-| pyannote.audio 4 / `speaker-diarization-community-1`, sherpa-onnx | Stubs with lazy imports |
-| macOS ScreenCaptureKit, Windows WASAPI loopback, Linux PulseAudio/PipeWire | Stubs with lazy imports |
-| OpenAI-compatible polisher and summarizer | Implemented |
-| Offline identity polish and extractive summary when no API key is set | Implemented |
-| Jinja2 Markdown note and JSON sidecar | Implemented |
-| `--json-events` JSONL progress stream | Implemented |
+| `FileInput`, 16 kHz mono resample, Markdown note, JSON sidecar, `--json-events` | Implemented |
+| `faster-whisper` CPU ASR | Implemented, extra `faster-whisper` |
+| `mlx-whisper` on Apple Silicon, including word timestamps | Implemented, extra `mlx` |
+| Vulkan `whisper.cpp` (`whisper-cli` or pywhispercpp) | Implemented, extra `vulkan` |
+| OpenVINO GenAI `WhisperPipeline` with GPU-or-CPU device selection | Implemented, extra `openvino` |
+| `track` / `single-speaker` diarization | Implemented, no extra |
+| pyannote `speaker-diarization-community-1` on the system track | Implemented, extra `diarization`, needs `HF_TOKEN` |
+| Live mic + system recording (macOS, Windows, Linux) and `--live` chunk transcripts | Implemented |
+| sherpa-onnx diarization | Stub |
+| OpenAI-compatible polish and summary, or an offline fallback when no API key is set | Implemented |
 
-ASR and diarization weights are not downloaded by the test suite. The sample note in `examples/sample_meeting.md` is rendered from hand-written utterances.
+`meetscribe backends` prints `usable=yes` only when this machine can actually run that backend. Weights are not downloaded by the test suite, and the tests do not open a microphone. `examples/sample_meeting.md` is rendered from hand-written utterances. The checklist at the end is the hardware pass for MLX, Vulkan, OpenVINO, and live recording.
 
 ## Install
 
@@ -40,15 +39,18 @@ pip install -e ".[faster-whisper]"
 
 Other extras, installed on the machine that will actually run them:
 
-| Extra | Packages | Used by |
+| Extra | Install | Used by |
 | --- | --- | --- |
-| `mlx` | mlx-whisper | Apple Silicon ASR stub (planned runtime) |
-| `openvino` | openvino-genai | Intel iGPU ASR stub |
-| `whisper-cpp` | pywhispercpp | GGML fallback stub |
-| `diarization` | pyannote.audio | pyannote stub |
-| `sherpa` | sherpa-onnx | sherpa-onnx stub |
-| `audio` | soundfile | FLAC, OGG, and float WAV |
-| `dev` | pytest | Tests |
+| `mlx` | `pip install -e ".[mlx]"` on Apple Silicon | MLX ASR |
+| `vulkan` or `whisper-cpp` | see Vulkan section; the PyPI wheel is CPU-only | whisper.cpp |
+| `openvino` | `pip install -e ".[openvino]"` | OpenVINO ASR |
+| `diarization` | `pip install -e ".[diarization]"` | pyannote |
+| `capture-linux` | `pip install -e ".[capture-linux]"` | Pulse/PipeWire recording |
+| `capture-windows` | `pip install -e ".[capture-windows]"` | WASAPI loopback |
+| `capture-macos` | `pip install -e ".[capture-macos]"` plus the Swift helper | ScreenCaptureKit + mic |
+| `audio` | `pip install -e ".[audio]"` | FLAC, OGG, float WAV |
+| `dev` | `pip install -e ".[dev]"` | pytest |
+| `sherpa` | `pip install -e ".[sherpa]"` | still a stub |
 
 m4a and mp3 need ffmpeg. Convert first, then point the CLI at the wav:
 
@@ -64,11 +66,16 @@ meetscribe backends
 meetscribe transcribe mic.wav --system system.wav --title "支付週會" -o notes/weekly.md
 meetscribe summarize notes/weekly.json
 meetscribe run mic.wav --system system.wav --speaker Me=林可安 --speaker Remote=客戶
+meetscribe devices
 meetscribe record --output-dir ./recording --duration 60
+meetscribe record --live --chunk-seconds 5 --output-dir ./recording
+meetscribe run --live --duration 120 --title "支付週會" -o notes/weekly.md
 meetscribe --json-events run mic.wav -o notes/weekly.md
 ```
 
-`transcribe` writes the transcript and skips the summary. `summarize` reads the JSON sidecar and rewrites the Markdown. `run` does both. `record` selects the platform capture backend; those backends are still stubs, so use existing files with `transcribe` or `run`.
+`transcribe` writes the transcript and skips the summary. `summarize` reads the JSON sidecar and rewrites the Markdown. `run` does both. `record` captures until Ctrl+C, or until `--duration` seconds. `--live` prints partial segments while the take is running; the finished wavs are still what diarization and the Markdown note use.
+
+Recording writes `mic.wav`, `system.wav`, and `session.json`. The JSON counts silence inserted and samples dropped while the two device clocks were pulled onto `time.monotonic()`. Both files are padded to the same length. Capture is 48 kHz; the pipeline resamples to 16 kHz before ASR.
 
 Speaker ids stay anonymous until you map them. The track diarizer uses the role ids `Me` and `Remote`. A single mixed file uses `SPEAKER_00`. Pass `--speaker SPEAKER_00=陳怡君` or put the same pairs under `[speakers]` in the config file.
 
@@ -118,9 +125,9 @@ src/meetscribe/
   hardware.py       Apple Silicon / Intel iGPU defaults
   merge.py          speaker assignment
   document.py       JSON sidecar
-  audio/            capture protocol, WAV I/O, platform stubs
-  asr/              ASR protocol, faster-whisper, stubs
-  diarization/      protocol, track, single-speaker, stubs
+  audio/            capture, host-clock sync, platform recorders
+  asr/              faster-whisper, mlx, vulkan, openvino
+  diarization/      track, single-speaker, pyannote; sherpa is still a stub
   llm/              OpenAI-compatible polish and summary
   render/           Jinja2 template
 ```
@@ -129,15 +136,125 @@ src/meetscribe/
 
 `meetscribe backends` prints the detected hardware and the backend that `auto` will select.
 
-| Machine | Capture | ASR | Model the ASR path is aimed at |
+| Machine | Capture | Default ASR | Checkpoint |
 | --- | --- | --- | --- |
-| Apple Silicon | `macos` (ScreenCaptureKit + Core Audio tap) | `mlx-whisper` | `MediaTek-Research/Breeze-ASR-25`, then `openai/whisper-large-v3-turbo` |
-| Windows or Linux with an Intel iGPU | `windows` (WASAPI loopback) or `linux` (PulseAudio/PipeWire monitor) | `openvino` | OpenVINO Whisper IR; Breeze has to be converted before this backend can load it |
-| Anything else | platform stub, or `file` for audio you already have | `faster-whisper` | CTranslate2 build of the fallback, `large-v3-turbo` |
+| Apple Silicon | `macos` | `mlx-whisper` | `schsu/breeze-asr-25-mlx`, fallback `mlx-community/whisper-large-v3-turbo` |
+| Windows or Linux with an Intel iGPU | `windows` or `linux` | `openvino` | IR under `~/.cache/meetscribe/models/`. `vulkan` is the other GPU path |
+| Anything else | the platform recorder, or `file` | `faster-whisper` | CTranslate2 large-v3-turbo, because Breeze is not a CT2 checkpoint |
 
-Diarization `auto` uses `track` when both mic and system audio are present, and `single-speaker` for one mixed file. `pyannote` will need `HF_TOKEN` and the community-1 pipeline. `sherpa-onnx` is the planned local diarizer with no token.
+Diarization `auto` uses `track` when both mic and system audio are present, and `single-speaker` for one mixed file. `--diarization pyannote` keeps the mic as `Me` and splits remote speakers on `system.wav`.
 
-Breeze-ASR-25 is a Transformers checkpoint, not a CTranslate2 or GGML file. The faster-whisper backend keeps the name in config and substitutes a large-v3-turbo CT2 build, then logs that substitution. Use `mlx-whisper` on Apple Silicon when you want Breeze itself.
+Breeze-ASR-25 is a Transformers Whisper checkpoint. faster-whisper substitutes large-v3-turbo and says so. MLX uses a published conversion. GGML and OpenVINO need the scripts below.
+
+## Model conversion
+
+MLX, on Apple Silicon. The default repo is already converted, so this is only for a local rebuild:
+
+```bash
+python scripts/convert_mlx.py
+git clone https://github.com/ml-explore/mlx-examples.git
+python scripts/convert_mlx.py --convert \
+  --convert-script mlx-examples/whisper/convert.py \
+  --torch-name-or-path MediaTek-Research/Breeze-ASR-25 \
+  --mlx-path ~/.cache/meetscribe/models/breeze-asr-25-mlx
+```
+
+The converter sometimes writes `model.safetensors`. mlx-whisper loads `weights.safetensors`. The script renames it. Known public weights: `schsu/breeze-asr-25-mlx` and `mlx-community/whisper-large-v3-turbo`.
+
+GGML / Vulkan:
+
+```bash
+python scripts/convert_ggml.py
+# large-v3-turbo without a conversion: download ggml-large-v3-turbo.bin from
+# https://huggingface.co/ggerganov/whisper.cpp into ~/.cache/meetscribe/models/
+git clone https://github.com/ggml-org/whisper.cpp.git
+pip install huggingface_hub torch transformers
+python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
+cmake -B whisper.cpp/build -S whisper.cpp -DGGML_VULKAN=1
+cmake --build whisper.cpp/build --target whisper-cli -j
+export MEETSCRIBE_WHISPER_CPP="$PWD/whisper.cpp/build/bin/whisper-cli"
+```
+
+A Vulkan-enabled Python binding, instead of the CLI:
+
+```bash
+GGML_VULKAN=1 pip install --no-binary pywhispercpp 'meetscribe[vulkan]'
+```
+
+The stock `pip install pywhispercpp` wheel is CPU. `meetscribe backends` says whether a Vulkan ICD was found. `whisper-cli` wins over pywhispercpp when `MEETSCRIBE_WHISPER_CPP` or `whisper-cli` is on `PATH`.
+
+OpenVINO:
+
+```bash
+pip install -U "optimum-intel[openvino]" "meetscribe[openvino]"
+python scripts/export_openvino.py
+python scripts/export_openvino.py --convert
+python scripts/export_openvino.py --model openai/whisper-large-v3-turbo --convert
+meetscribe transcribe meeting.wav --asr-backend openvino
+```
+
+`auto` picks `GPU` when OpenVINO lists one, otherwise CPU. Override with `MEETSCRIBE_OPENVINO_DEVICE=CPU` or `[asr] openvino_device`.
+
+## Recording
+
+Linux needs PipeWire or PulseAudio (`pactl`) and sounddevice. System audio is the sink `.monitor` source.
+
+```bash
+pip install -e ".[capture-linux]"
+meetscribe devices
+meetscribe record -o ./recording --mic-device alsa_input --system-device monitor
+```
+
+Windows uses WASAPI loopback from PyAudioWPatch, so the meeting audio is the render endpoint and the headset is a separate capture endpoint.
+
+```bash
+pip install -e ".[capture-windows]"
+meetscribe devices
+meetscribe record -o .\recording
+```
+
+macOS uses sounddevice for the microphone and a Swift ScreenCaptureKit helper for system audio. PyObjC's completion-handler wrapping of ScreenCaptureKit is brittle across OS releases, and the process that calls it needs Screen Recording permission. A tiny helper keeps that permission on one binary and writes 48 kHz s16le PCM to stdout. Python stamps each read with `time.monotonic()`, the same clock as the mic callback, and the sync session absorbs the few milliseconds of pipe delay the same way it absorbs device drift.
+
+```bash
+pip install -e ".[capture-macos]"
+swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift
+# System Settings → Privacy & Security → Screen Recording → allow the terminal
+meetscribe record -o ./recording
+```
+
+`session.json` next to the wavs reports silence inserted and samples dropped per track.
+
+## Manual test checklist
+
+Run `meetscribe backends` first and confirm `usable=yes` for the backend you are about to try.
+
+Apple Silicon
+
+1. `pip install -e ".[mlx,capture-macos]"`, compile the Swift helper, allow Screen Recording.
+2. `meetscribe backends` shows `mlx-whisper` usable and `macos` usable.
+3. Play a Traditional Chinese / English clip. `meetscribe record -o /tmp/take --duration 20`.
+4. Confirm `mic.wav` and `system.wav` are both non-silent, similar length, and `session.json` has small silence/dropped times.
+5. `meetscribe transcribe /tmp/take --asr-backend mlx-whisper --diarization pyannote`. The note is Traditional Chinese, English product names stay in English, and remote speakers are not all labeled `Me`.
+6. `meetscribe record --live --chunk-seconds 5 --duration 30` prints segments before the process exits.
+
+Windows, Intel iGPU
+
+1. `pip install -e ".[openvino,capture-windows]"` and export an IR with `scripts/export_openvino.py --convert`.
+2. Build `whisper-cli` with `-DGGML_VULKAN=1` and set `MEETSCRIBE_WHISPER_CPP`.
+3. `meetscribe backends` shows `openvino` usable with a GPU device, and `vulkan` usable with an ICD.
+4. Join a browser meeting. `meetscribe record -o .\take --duration 30`. Mic and system wavs differ.
+5. Transcribe the same take with `--asr-backend openvino` and again with `--asr-backend vulkan`.
+6. `meetscribe transcribe .\take --diarization pyannote` after `HF_TOKEN` is set and the community-1 conditions are accepted.
+
+Linux, Intel iGPU or any Vulkan GPU
+
+1. `pip install -e ".[capture-linux,openvino,vulkan]"`. Export IR. Build Vulkan `whisper-cli`.
+2. `meetscribe devices` lists a `.monitor` source and a mic.
+3. `meetscribe record -o /tmp/take --duration 15` while audio plays through the speakers. `system.wav` follows that playback; `mic.wav` follows the microphone.
+4. `meetscribe transcribe /tmp/take --asr-backend openvino` and `--asr-backend vulkan`.
+5. `meetscribe record --live --duration 20` emits `[mic …]` / `[system …]` lines and still writes the wavs.
+
+If a GPU device is missing, OpenVINO logs a CPU fallback and still returns text. Vulkan without an ICD runs only when the binary or the pywhispercpp wheel is a CPU build; `backends` says which case it detected.
 
 Meetings are assumed to be Taiwan Mandarin mixed with English. The ASR language hint defaults to `zh`. Whisper often emits Simplified Chinese; the polisher rewrites that to zh-TW and leaves API names, product names, identifiers, and abbreviations in English.
 

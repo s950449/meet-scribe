@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from meetscribe.config import AppConfig
 from meetscribe.errors import UnknownBackend
@@ -100,9 +101,9 @@ def _asr_specs() -> list[BackendSpec]:
         BackendSpec(
             kind="asr",
             name="mlx-whisper",
-            description="MLX Whisper on Apple Silicon. Planned default model: Breeze-ASR-25.",
+            description="MLX Whisper on Apple Silicon. Default weights: schsu/breeze-asr-25-mlx.",
             device="metal",
-            implemented=False,
+            implemented=True,
             factory=_mlx_whisper,
             module="mlx_whisper",
             extra="mlx",
@@ -111,9 +112,9 @@ def _asr_specs() -> list[BackendSpec]:
         BackendSpec(
             kind="asr",
             name="openvino",
-            description="OpenVINO GenAI WhisperPipeline for Intel integrated GPUs.",
+            description="OpenVINO GenAI WhisperPipeline. GPU when listed, otherwise CPU.",
             device="openvino-gpu",
-            implemented=False,
+            implemented=True,
             factory=_openvino,
             module="openvino_genai",
             extra="openvino",
@@ -121,10 +122,21 @@ def _asr_specs() -> list[BackendSpec]:
         ),
         BackendSpec(
             kind="asr",
+            name="vulkan",
+            description="whisper.cpp built with GGML_VULKAN. Falls back to pywhispercpp.",
+            device="vulkan",
+            implemented=True,
+            factory=_vulkan,
+            module="pywhispercpp",
+            extra="vulkan",
+            platforms=("linux", "windows", "darwin"),
+        ),
+        BackendSpec(
+            kind="asr",
             name="whisper.cpp",
-            description="whisper.cpp through pywhispercpp. Portable GGML fallback.",
-            device="cpu",
-            implemented=False,
+            description="Alias of vulkan: whisper-cli if set, otherwise pywhispercpp.",
+            device="vulkan",
+            implemented=True,
             factory=_whisper_cpp,
             module="pywhispercpp",
             extra="whisper-cpp",
@@ -156,9 +168,9 @@ def _diarization_specs() -> list[BackendSpec]:
         BackendSpec(
             kind="diarization",
             name="pyannote",
-            description="pyannote.audio speaker-diarization-community-1. Needs HF_TOKEN.",
+            description="pyannote speaker-diarization-community-1 on the system track. Needs HF_TOKEN.",
             device="cpu",
-            implemented=False,
+            implemented=True,
             factory=_pyannote,
             module="pyannote.audio",
             extra="diarization",
@@ -192,28 +204,34 @@ def _capture_specs() -> list[BackendSpec]:
         BackendSpec(
             kind="capture",
             name="macos",
-            description="ScreenCaptureKit system audio plus a Core Audio mic tap.",
+            description="ScreenCaptureKit helper for system audio plus a Core Audio mic.",
             device="screencapturekit",
-            implemented=False,
+            implemented=True,
             factory=_macos_capture,
+            module="sounddevice",
+            extra="capture-macos",
             platforms=("darwin",),
         ),
         BackendSpec(
             kind="capture",
             name="windows",
-            description="WASAPI loopback for system audio plus a WASAPI mic client.",
+            description="WASAPI loopback for system audio plus the default microphone.",
             device="wasapi",
-            implemented=False,
+            implemented=True,
             factory=_windows_capture,
+            module="pyaudiowpatch",
+            extra="capture-windows",
             platforms=("windows",),
         ),
         BackendSpec(
             kind="capture",
             name="linux",
-            description="PulseAudio or PipeWire monitor source plus the default mic.",
+            description="PulseAudio/PipeWire monitor source plus the default microphone.",
             device="pipewire",
-            implemented=False,
+            implemented=True,
             factory=_linux_capture,
+            module="sounddevice",
+            extra="capture-linux",
             platforms=("linux",),
         ),
     ]
@@ -230,8 +248,16 @@ def _faster_whisper(config: AppConfig) -> object:
     )
 
 
+def _model_dir(config: AppConfig):
+    from meetscribe.asr.models import default_model_dir
+
+    if config.asr.model_dir:
+        return Path(config.asr.model_dir).expanduser()
+    return default_model_dir()
+
+
 def _mlx_whisper(config: AppConfig) -> object:
-    from meetscribe.asr.stubs import MlxWhisperAsr
+    from meetscribe.asr.mlx_whisper import MlxWhisperAsr
 
     return MlxWhisperAsr(
         model=config.asr.model,
@@ -241,22 +267,40 @@ def _mlx_whisper(config: AppConfig) -> object:
 
 
 def _openvino(config: AppConfig) -> object:
-    from meetscribe.asr.stubs import OpenVINOWhisperAsr
+    from meetscribe.asr.openvino_backend import OpenVINOWhisperAsr
 
     return OpenVINOWhisperAsr(
         model=config.asr.model,
         fallback_model=config.asr.fallback_model,
         language=config.asr.language,
+        device=config.asr.openvino_device or config.asr.device,
+        model_dir=_model_dir(config),
+    )
+
+
+def _vulkan(config: AppConfig) -> object:
+    from meetscribe.asr.vulkan import VulkanWhisperAsr
+
+    return VulkanWhisperAsr(
+        model=config.asr.model,
+        fallback_model=config.asr.fallback_model,
+        language=config.asr.language,
+        model_dir=_model_dir(config),
+        whisper_cpp_bin=config.asr.whisper_cpp_bin,
+        backend_name="vulkan",
     )
 
 
 def _whisper_cpp(config: AppConfig) -> object:
-    from meetscribe.asr.stubs import WhisperCppAsr
+    from meetscribe.asr.vulkan import VulkanWhisperAsr
 
-    return WhisperCppAsr(
+    return VulkanWhisperAsr(
         model=config.asr.model,
         fallback_model=config.asr.fallback_model,
         language=config.asr.language,
+        model_dir=_model_dir(config),
+        whisper_cpp_bin=config.asr.whisper_cpp_bin,
+        backend_name="whisper.cpp",
     )
 
 
@@ -275,7 +319,7 @@ def _single_speaker(config: AppConfig) -> object:
 
 
 def _pyannote(config: AppConfig) -> object:
-    from meetscribe.diarization.stubs import PyannoteDiarizer
+    from meetscribe.diarization.pyannote import PyannoteDiarizer
 
     return PyannoteDiarizer(hf_token=config.hf_token())
 
@@ -294,22 +338,28 @@ def _file_input(config: AppConfig) -> object:
     return FileInput()
 
 
-def _macos_capture(config: AppConfig) -> object:
-    del config
-    from meetscribe.audio.stubs import MacOSCapture
+def _capture_kwargs(config: AppConfig) -> dict[str, object]:
+    return {
+        "sample_rate": config.capture.sample_rate,
+        "mic_device": config.capture.mic_device,
+        "system_device": config.capture.system_device,
+        "chunk_seconds": config.capture.chunk_seconds,
+    }
 
-    return MacOSCapture()
+
+def _macos_capture(config: AppConfig) -> object:
+    from meetscribe.audio.macos import MacOSCapture
+
+    return MacOSCapture(**_capture_kwargs(config))
 
 
 def _windows_capture(config: AppConfig) -> object:
-    del config
-    from meetscribe.audio.stubs import WindowsCapture
+    from meetscribe.audio.windows import WindowsCapture
 
-    return WindowsCapture()
+    return WindowsCapture(**_capture_kwargs(config))
 
 
 def _linux_capture(config: AppConfig) -> object:
-    del config
-    from meetscribe.audio.stubs import LinuxCapture
+    from meetscribe.audio.linux import LinuxCapture
 
-    return LinuxCapture()
+    return LinuxCapture(**_capture_kwargs(config))

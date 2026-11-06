@@ -30,6 +30,7 @@ class AudioCapture(Protocol):
         *,
         duration_s: float | None = None,
         on_event: Callable[[ProgressEvent], None] | None = None,
+        on_chunk: Callable[..., None] | None = None,
     ) -> CaptureResult:
         """Capture until ``duration_s`` elapses, or load files for file input."""
 
