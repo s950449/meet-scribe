@@ -2,7 +2,7 @@ import pytest
 
 from meetscribe.config import AppConfig
 from meetscribe.errors import LlmError
-from meetscribe.llm.client import extract_json_object
+from meetscribe.llm.client import extract_json_object, strip_thinking
 from meetscribe.llm.budget import chunk_items, estimate_tokens
 from meetscribe.llm.factory import build_polisher, build_summarizer
 from meetscribe.llm.polisher import OpenAIPolisher
@@ -81,7 +81,16 @@ def test_factory_uses_llama_server_without_an_api_key() -> None:
     assert isinstance(summarizer, OpenAISummarizer)
     assert polisher.client.api_key == "llama-server"
     assert polisher.client.base_url == "http://127.0.0.1:8080/v1"
-    assert polisher.client.model == "qwen2.5-14b-instruct"
+    assert polisher.client.model == "gemma-4-12b-it"
+
+
+def test_strip_thinking_blocks() -> None:
+    qwen = "<think>\n先想一下\n</think>\n{\"overview\": \"好\"}"
+    assert strip_thinking(qwen) == '{"overview": "好"}'
+    gemma = "<|channel>thought\n內部推理\n<channel|>{\"utterances\": []}"
+    assert strip_thinking(gemma) == '{"utterances": []}'
+    empty = "<|channel>thought\n<channel|>答案"
+    assert strip_thinking(empty) == "答案"
 
 
 def test_prompts_keep_english_terms_and_traditional_chinese() -> None:

@@ -18,7 +18,8 @@ from meetscribe.errors import ConfigError
 DEFAULT_ASR_MODEL = "MediaTek-Research/Breeze-ASR-25"
 DEFAULT_FALLBACK_MODEL = "openai/whisper-large-v3-turbo"
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8080/v1"
-DEFAULT_LLM_MODEL = "qwen2.5-14b-instruct"
+DEFAULT_LLM_MODEL = "gemma-4-12b-it"
+DEFAULT_LLM_FALLBACK_MODEL = "qwen3.5-9b"
 # Sent only when OPENAI_API_KEY is unset. llama-server does not check it.
 DUMMY_API_KEY = "llama-server"
 SECRET_KEYS = frozenset({"api_key", "hf_token", "token", "openai_api_key"})
@@ -47,11 +48,13 @@ class LlmSettings:
     base_url: str = DEFAULT_LLM_BASE_URL
     api_key_env: str = "OPENAI_API_KEY"
     model: str = DEFAULT_LLM_MODEL
+    fallback_model: str = DEFAULT_LLM_FALLBACK_MODEL
     polish: bool = True
-    # Match llama-server -c. Long transcripts are split to stay under this.
-    context_tokens: int = 8192
-    # Room for the system prompt's completion. Not sent to the server.
-    reserve_tokens: int = 1536
+    # Practical KV-cache size for an iGPU. Both suggested models natively
+    # support 256K; raise this together with llama-server -c when memory allows.
+    context_tokens: int = 16384
+    # Room for the JSON completion. Not sent to the server.
+    reserve_tokens: int = 2048
 
 
 @dataclass
@@ -284,6 +287,8 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         llm = replace(llm, api_key_env=str(llm_table["api_key_env"]))
     if "model" in llm_table:
         llm = replace(llm, model=str(llm_table["model"]))
+    if "fallback_model" in llm_table:
+        llm = replace(llm, fallback_model=str(llm_table["fallback_model"]))
     if "polish" in llm_table:
         polish = llm_table["polish"]
         if not isinstance(polish, bool):

@@ -86,7 +86,7 @@ With `--json-events`, progress is one JSON object per line on stdout. Human text
 ```json
 {"event":"stage","stage":"asr","status":"start","track_id":"mic","message":"Transcribing mic"}
 {"event":"stage","stage":"asr","status":"done","track_id":"mic","message":"mic: 12 segment(s)","data":{"segments":12}}
-{"event":"stage","stage":"polish","status":"start","message":"Polishing with qwen2.5-14b-instruct at http://127.0.0.1:8080/v1"}
+{"event":"stage","stage":"polish","status":"start","message":"Polishing with gemma-4-12b-it at http://127.0.0.1:8080/v1"}
 {"event":"error","stage":"pipeline","status":"error","message":"..."}
 ```
 
@@ -276,10 +276,11 @@ Secrets are read from the environment at call time. `api_key` and `hf_token` in 
 [llm]
 base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
-model = "qwen2.5-14b-instruct"
+model = "gemma-4-12b-it"
+fallback_model = "qwen3.5-9b"
 polish = true
-context_tokens = 8192
-reserve_tokens = 1536
+context_tokens = 16384
+reserve_tokens = 2048
 
 [diarization]
 hf_token_env = "HF_TOKEN"
@@ -291,14 +292,33 @@ hf_token_env = "HF_TOKEN"
 
 ## llama-server
 
-The default local endpoint is llama.cpp's `llama-server` on port 8080. A suggested GGUF for Traditional Chinese plus English meeting notes is **Qwen2.5-14B-Instruct Q5_K_M** (for example `bartowski/Qwen2.5-14B-Instruct-GGUF`, file `Qwen2.5-14B-Instruct-Q5_K_M.gguf`). That is a suggestion, not a requirement. On a smaller Intel iGPU, Qwen2.5-7B-Instruct Q5_K_M is the lighter alternative. Keep `-c` aligned with `[llm].context_tokens`.
+The default local model is **Gemma 4 12B** (instruct). When the machine cannot hold that GGUF plus the KV cache, switch the server to **Qwen 3.5 9B**. meetscribe does not swap models by itself: start `llama-server` with the file that fits, and keep `[llm].context_tokens` equal to `-c`.
 
-CPU:
+Confirmed Hugging Face repos (checked against the model cards, not guessed):
+
+| Role | Weights | GGUF |
+| --- | --- | --- |
+| Default | Gemma 4 12B IT. Native context **256K** tokens (`google/gemma-4-12B`). | [`ggml-org/gemma-4-12B-it-GGUF`](https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF), quant `Q4_K_M` (about 7.4 GB). Google's QAT build is [`google/gemma-4-12B-it-qat-q4_0-gguf`](https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf). |
+| Fallback | Qwen3.5-9B. Native context **262,144** tokens (`Qwen/Qwen3.5-9B`). | [`bartowski/Qwen_Qwen3.5-9B-GGUF`](https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF), file `Qwen3.5-9B-Q4_K_M.gguf` (about 6.2 GB). |
+
+`16384` is the meetscribe default, not the model maximum. A 12B Q4 plus a 256K cache does not fit a typical Intel iGPU. Raise `-c` and `context_tokens` together when you have the memory (32768 is a reasonable next step; the full 256K window needs a quantized KV cache and a lot of RAM).
+
+Both models use a Jinja chat template, and both can emit a thinking channel. For meeting notes, turn thinking off so the reply is JSON. The client still strips leftover `<think>…</think>` blocks and Gemma `<|channel>thought … <channel|>` blocks, and it ignores `reasoning_content`.
+
+Shared server flags: `--jinja`, `--chat-template-kwargs '{"enable_thinking":false}'`, `--reasoning off`, `--no-mmproj` (text only; drop it if you want Gemma's audio/image projector), `-c 16384`, `-ngl 99` on a GPU.
+
+CPU, Gemma 4 12B:
 
 ```bash
 cmake -B build
 cmake --build build --config Release -j
-./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 --host 127.0.0.1 --port 8080
+./build/bin/llama-server \
+  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  --no-mmproj --jinja \
+  --chat-template-kwargs '{"enable_thinking":false}' \
+  --reasoning off \
+  -c 16384 --host 127.0.0.1 --port 8080 \
+  --alias gemma-4-12b-it
 ```
 
 Metal (Apple Silicon). `GGML_METAL` is on by default in macOS builds; the flag is explicit here:
@@ -306,7 +326,13 @@ Metal (Apple Silicon). `GGML_METAL` is on by default in macOS builds; the flag i
 ```bash
 cmake -B build -DGGML_METAL=ON
 cmake --build build --config Release -j
-./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 -ngl 99 --host 127.0.0.1 --port 8080
+./build/bin/llama-server \
+  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  --no-mmproj --jinja \
+  --chat-template-kwargs '{"enable_thinking":false}' \
+  --reasoning off \
+  -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
+  --alias gemma-4-12b-it
 ```
 
 Vulkan (Windows or Linux, including Intel iGPUs):
@@ -314,7 +340,13 @@ Vulkan (Windows or Linux, including Intel iGPUs):
 ```bash
 cmake -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -j
-./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 -ngl 99 --host 127.0.0.1 --port 8080
+./build/bin/llama-server \
+  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  --no-mmproj --jinja \
+  --chat-template-kwargs '{"enable_thinking":false}' \
+  --reasoning off \
+  -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
+  --alias gemma-4-12b-it
 ```
 
 SYCL (Intel iGPU via oneAPI):
@@ -323,10 +355,28 @@ SYCL (Intel iGPU via oneAPI):
 source /opt/intel/oneapi/setvars.sh
 cmake -B build -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx
 cmake --build build --config Release -j
-./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 -ngl 99 --host 127.0.0.1 --port 8080
+./build/bin/llama-server \
+  -hf ggml-org/gemma-4-12B-it-GGUF:Q4_K_M \
+  --no-mmproj --jinja \
+  --chat-template-kwargs '{"enable_thinking":false}' \
+  --reasoning off \
+  -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
+  --alias gemma-4-12b-it
 ```
 
-Then `uv run meetscribe run meeting.wav`. The client calls `http://127.0.0.1:8080/v1/chat/completions`.
+Fallback when that GGUF does not fit. Same flags, smaller model. If `-hf` cannot resolve the quant tag, pass `-m` with `Qwen3.5-9B-Q4_K_M.gguf` from the bartowski repo.
+
+```bash
+./build/bin/llama-server \
+  -hf bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M \
+  --jinja \
+  --chat-template-kwargs '{"enable_thinking":false}' \
+  --reasoning off \
+  -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
+  --alias qwen3.5-9b
+```
+
+Set `[llm].model` to the alias you started (`gemma-4-12b-it` or `qwen3.5-9b`). A single-model server still answers even if the name does not match. Then `uv run meetscribe run meeting.wav`. The client calls `http://127.0.0.1:8080/v1/chat/completions`.
 
 ## Add a backend
 

@@ -52,13 +52,49 @@ class OpenAIChatClient:
             )
         except Exception as exc:
             raise LlmError(f"LLM request to {self.base_url} failed: {exc}") from exc
-        content = response.choices[0].message.content if response.choices else None
-        if not content or not content.strip():
-            raise LlmError("LLM returned an empty message")
-        return content
+        if not response.choices:
+            raise LlmError("LLM returned no choices")
+        return visible_completion(response.choices[0].message)
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_GEMMA_THOUGHT = re.compile(r"<\|channel>thought\s*.*?<channel\|>\s*", re.DOTALL)
+_THINK_TOKEN = re.compile(r"<\|think\|>\s*")
+
+
+def strip_thinking(text: str) -> str:
+    """Drop reasoning channels so JSON parsing sees only the answer.
+
+    llama-server may leave Qwen ``<think>`` blocks or Gemma 4
+    ``<|channel>thought`` blocks in ``message.content`` when reasoning is
+    enabled. ``reasoning_content`` is ignored by the caller.
+    """
+
+    cleaned = _THINK_BLOCK.sub("", text)
+    cleaned = _GEMMA_THOUGHT.sub("", cleaned)
+    cleaned = _THINK_TOKEN.sub("", cleaned)
+    return cleaned.strip()
+
+
+def visible_completion(message: object) -> str:
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        content = "".join(parts)
+    cleaned = strip_thinking(str(content or ""))
+    if not cleaned:
+        raise LlmError(
+            "LLM returned no answer after stripping thinking output. "
+            "Start llama-server with --jinja --reasoning off "
+            "and --chat-template-kwargs '{\"enable_thinking\":false}'."
+        )
+    return cleaned
 
 
 def extract_json_object(text: str) -> dict[str, object]:

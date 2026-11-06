@@ -14,8 +14,9 @@ def test_missing_default_file_uses_builtin_defaults(tmp_path: Path) -> None:
     assert config.asr.language == "zh"
     assert config.diarization.backend == "auto"
     assert config.llm.base_url == "http://127.0.0.1:8080/v1"
-    assert config.llm.model == "qwen2.5-14b-instruct"
-    assert config.llm.context_tokens == 8192
+    assert config.llm.model == "gemma-4-12b-it"
+    assert config.llm.fallback_model == "qwen3.5-9b"
+    assert config.llm.context_tokens == 16384
     assert config.llm.polish is True
     assert config.api_key({}) is None
     assert config.resolved_api_key({}) == "llama-server"

@@ -22,12 +22,15 @@ hf_token_env = "HF_TOKEN"
 
 [llm]
 # llama.cpp llama-server. The model name is a label; single-model llama-server ignores it.
+# Default GGUF: ggml-org/gemma-4-12B-it-GGUF (Q4_K_M). Fallback: bartowski/Qwen_Qwen3.5-9B-GGUF.
 base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
-model = "qwen2.5-14b-instruct"
+model = "gemma-4-12b-it"
+fallback_model = "qwen3.5-9b"
 polish = true
-context_tokens = 8192
-reserve_tokens = 1536
+# Both models support 256K. 16384 keeps the KV cache realistic on an iGPU.
+context_tokens = 16384
+reserve_tokens = 2048
 
 [capture]
 backend = "auto" # auto | file | macos | windows | linux
