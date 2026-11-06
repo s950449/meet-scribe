@@ -480,9 +480,12 @@ A GUI should call `run_meeting` or `summarize_file` with an object that implemen
 ```bash
 uv sync
 uv run pytest
+uv run ruff check
+uv run ruff format --check
+uv run mypy
 uv run python examples/sample_meeting.py
 ```
 
-`uv run pytest` covers speaker assignment, Markdown rendering, config precedence, the registry (including a fake backend), WAV normalization, the LLM JSON parsers, and an end-to-end run with fake ASR and summarizer.
+`uv run pytest` covers speaker assignment, Markdown rendering, config precedence, the registry (including a fake backend), WAV normalization, the LLM JSON parsers, and an end-to-end run with fake ASR and summarizer. Ruff (lint and format) and mypy are dev-group tools. mypy checks `src/meetscribe`. Optional `.pre-commit-config.yaml` runs the same three commands through `uv run`.
 
 The checked-in note is `examples/sample_meeting.md`.
