@@ -82,6 +82,36 @@ meetscribe --json-events run mic.wav -o notes/weekly.md
 
 `transcribe` writes the transcript and skips the summary. `summarize` reads the JSON sidecar and rewrites the Markdown. `run` does both. `record` captures until Ctrl+C, or until `--duration` seconds. `--live` prints partial segments while the take is running; the finished wavs are still what diarization and the Markdown note use.
 
+### Recover an interrupted run
+
+`run` and `transcribe` save completed stages so a failed LLM request does not
+require transcribing the audio again. A readable Markdown note and JSON sidecar
+are written after speaker assignment, then updated after polishing and summary.
+
+```bash
+meetscribe run meeting.m4a -o notes/meeting.md --work-dir notes/meeting-work
+# Repeat the original command with --resume after fixing the failure:
+meetscribe run meeting.m4a -o notes/meeting.md --work-dir notes/meeting-work --resume
+```
+
+Use the original source, options, and work directory when resuming. Changed
+input or settings invalidate affected stages and their downstream results.
+Without `--resume`, the command starts fresh. A missing, corrupt, or incompatible
+checkpoint produces an explicit error.
+
+With `-o notes/meeting.md`, the default work directory is
+`notes/meeting.md.work`; otherwise it is under the configured output directory's
+`.meetscribe-work/`, keyed by the source path. Work directories retain audio and
+transcripts after success or failure; remove them when you no longer need to
+resume. They do not store API keys or Hugging Face tokens. For a recording made
+by `run`, pass the saved recording directory as the source when resuming, so a
+new recording does not overwrite the original.
+
+`--keep-audio` also copies normalized WAVs beside the note into `<name>.audio/`.
+It refuses an existing destination or a destination that overlaps the work
+directory. Choose a new `--output` path to preserve another copy; existing
+recordings and checkpoints are never deleted to make room.
+
 ### Control and monitor recording
 
 In an interactive terminal, press `p` to pause or continue and `q` to finish;
