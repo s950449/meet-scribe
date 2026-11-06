@@ -85,7 +85,7 @@ class PyannoteDiarizer:
             from pyannote.audio import Pipeline
         except ImportError as exc:
             raise BackendNotInstalled(
-                "pyannote.audio is not installed. pip install 'meetscribe[diarization]'"
+                "pyannote.audio is not installed. uv sync --extra diarization"
             ) from exc
         try:
             pipeline = Pipeline.from_pretrained(self.model, token=self.hf_token)

@@ -158,7 +158,7 @@ def _transcribe_binding(
         raise BackendNotInstalled(
             "Neither whisper-cli nor pywhispercpp is available. "
             "Build whisper.cpp with -DGGML_VULKAN=1 and set MEETSCRIBE_WHISPER_CPP, "
-            "or pip install 'meetscribe[vulkan]'."
+            "or uv sync --extra vulkan."
         ) from exc
     model = Model(str(model_path), print_progress=False, print_realtime=False)
     raw = model.transcribe(

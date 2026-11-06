@@ -138,7 +138,7 @@ def _pyaudio():
         import pyaudiowpatch as pyaudio
     except ImportError as exc:
         raise BackendNotInstalled(
-            "PyAudioWPatch is not installed. On Windows: pip install 'meetscribe[capture-windows]'"
+            "PyAudioWPatch is not installed. On Windows: uv sync --extra capture-windows"
         ) from exc
     return pyaudio.PyAudio()
 
@@ -148,7 +148,7 @@ def _open_wasapi(device: AudioDevice, track_id: str, session: SyncedWavSession, 
         import pyaudiowpatch as pyaudio
     except ImportError as exc:
         raise BackendNotInstalled(
-            "PyAudioWPatch is not installed. On Windows: pip install 'meetscribe[capture-windows]'"
+            "PyAudioWPatch is not installed. On Windows: uv sync --extra capture-windows"
         ) from exc
     audio = pyaudio.PyAudio()
     channels = device.channels or 1

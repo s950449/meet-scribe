@@ -17,9 +17,11 @@ class ChatClient(Protocol):
 class OpenAIChatClient:
     """Chat completions against any server that speaks the OpenAI protocol.
 
-    ``base_url`` points at the server root that already includes ``/v1`` when
-    the server expects it (Ollama, LM Studio, vLLM, llama.cpp). The API key is
-    passed in memory and is never written to the config file.
+    ``base_url`` is the server root that already includes ``/v1``. The default
+    is llama.cpp's llama-server. The same client talks to any other
+    OpenAI-compatible server. llama-server ignores the model name in
+    single-model mode and does not require a key; pass a dummy when the
+    environment variable is unset. The key stays in memory.
     """
 
     def __init__(self, *, base_url: str, api_key: str, model: str, timeout: float = 120.0) -> None:
@@ -33,7 +35,12 @@ class OpenAIChatClient:
             from openai import OpenAI
         except ImportError as exc:
             raise LlmError("The openai package is not installed. Reinstall meetscribe.") from exc
-        client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.timeout)
+        client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            max_retries=0,
+        )
         try:
             response = client.chat.completions.create(
                 model=self.model,

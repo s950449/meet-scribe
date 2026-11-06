@@ -72,6 +72,7 @@ def test_run_meeting_with_fakes(tmp_path: Path) -> None:
         sink=sink,
         asr=FakeAsr(),
         summarizer=FakeSummarizer(),
+        do_polish=False,
         environ={},
         work_dir=tmp_path / "work",
     )
@@ -118,6 +119,7 @@ def test_summarize_file_rewrites_markdown(tmp_path: Path) -> None:
         title="週會",
         asr=FakeAsr(),
         do_summary=False,
+        do_polish=False,
         environ={},
     )
     second = summarize_file(

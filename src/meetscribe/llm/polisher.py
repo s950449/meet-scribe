@@ -7,18 +7,18 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from meetscribe.errors import LlmError
+from meetscribe.llm.budget import chunk_items
 from meetscribe.llm.client import ChatClient, extract_json_object
 from meetscribe.llm.prompts import POLISH_SYSTEM
 from meetscribe.types import AttributedUtterance, ProgressEvent
-
-BATCH_SIZE = 40
 
 
 class OpenAIPolisher:
     name = "openai"
 
-    def __init__(self, client: ChatClient) -> None:
+    def __init__(self, client: ChatClient, *, token_budget: int = 6000) -> None:
         self.client = client
+        self.token_budget = token_budget
 
     def polish(
         self,
@@ -29,8 +29,9 @@ class OpenAIPolisher:
         del on_event
         items = list(utterances)
         polished = list(items)
-        for offset in range(0, len(items), BATCH_SIZE):
-            chunk = items[offset : offset + BATCH_SIZE]
+        chunks = chunk_items(items, _render_utterance, self.token_budget)
+        offset = 0
+        for chunk in chunks:
             raw = self.client.complete(system=POLISH_SYSTEM, user=_payload(chunk))
             data = extract_json_object(raw)
             rows = data.get("utterances", [])
@@ -47,6 +48,7 @@ class OpenAIPolisher:
                 absolute = offset + index
                 if text and 0 <= absolute < len(polished):
                     polished[absolute] = replace(polished[absolute], polished_text=text)
+            offset += len(chunk)
         return tuple(
             item if item.polished_text is not None else replace(item, polished_text=item.text)
             for item in polished
@@ -54,7 +56,7 @@ class OpenAIPolisher:
 
 
 class IdentityPolisher:
-    """Copy ASR text through when polishing is off or no API key is configured."""
+    """Copy ASR text through when polishing is turned off."""
 
     name = "identity"
 
@@ -69,6 +71,10 @@ class IdentityPolisher:
     ) -> tuple[AttributedUtterance, ...]:
         del on_event
         return tuple(replace(item, polished_text=item.text) for item in utterances)
+
+
+def _render_utterance(utterance: AttributedUtterance) -> str:
+    return f"{utterance.speaker_id} {utterance.text}"
 
 
 def _payload(utterances: Sequence[AttributedUtterance]) -> str:

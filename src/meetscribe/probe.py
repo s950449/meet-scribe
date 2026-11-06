@@ -110,7 +110,7 @@ def _runtime_reason(spec: BackendSpec, hardware: HardwareInfo) -> str:
         if not hardware.apple_silicon:
             return "requires Apple Silicon"
         if not module_available("mlx_whisper"):
-            return "pip install 'meetscribe[mlx]'"
+            return "uv sync --extra mlx"
         return "mlx-whisper importable; default weights schsu/breeze-asr-25-mlx"
     if spec.name in {"vulkan", "whisper.cpp"}:
         binary = whisper_cli_path()
@@ -124,10 +124,10 @@ def _runtime_reason(spec: BackendSpec, hardware: HardwareInfo) -> str:
             return "pywhispercpp importable; Vulkan ICD present (GPU only if built with GGML_VULKAN=1)"
         if binding:
             return "pywhispercpp importable; no Vulkan ICD, the stock wheel runs on CPU"
-        return "build whisper.cpp with -DGGML_VULKAN=1 or pip install 'meetscribe[vulkan]'"
+        return "build whisper.cpp with -DGGML_VULKAN=1 or uv sync --extra vulkan"
     if spec.name == "openvino":
         if not module_available("openvino_genai"):
-            return "pip install 'meetscribe[openvino]'"
+            return "uv sync --extra openvino"
         devices = _openvino_devices()
         if any(device.upper().startswith("GPU") for device in devices):
             return "OpenVINO devices: " + ", ".join(devices)
@@ -136,32 +136,32 @@ def _runtime_reason(spec: BackendSpec, hardware: HardwareInfo) -> str:
         return "openvino-genai importable"
     if spec.name == "pyannote":
         if not module_available("pyannote.audio"):
-            return "pip install 'meetscribe[diarization]'"
+            return "uv sync --extra diarization"
         return "pyannote importable; set HF_TOKEN and accept speaker-diarization-community-1"
     if spec.name == "linux":
         if not module_available("sounddevice"):
-            return "pip install 'meetscribe[capture-linux]'"
+            return "uv sync --extra capture-linux"
         if shutil.which("pactl") is None:
             return "sounddevice importable; pactl was not found"
         return "sounddevice importable; pactl found"
     if spec.name == "windows":
         if not module_available("pyaudiowpatch"):
-            return "pip install 'meetscribe[capture-windows]'"
+            return "uv sync --extra capture-windows"
         return "PyAudioWPatch importable"
     if spec.name == "macos":
         if not module_available("sounddevice"):
-            return "pip install 'meetscribe[capture-macos]'"
+            return "uv sync --extra capture-macos"
         if shutil.which("meetscribe-system-audio"):
             return "sounddevice and meetscribe-system-audio found"
         if shutil.which("swiftc"):
             return "sounddevice found; compile scripts/macos/SystemAudioCapture.swift"
         return "sounddevice found; swiftc is missing, so system audio cannot be built"
     if spec.name == "faster-whisper" and not module_available("faster_whisper"):
-        return "pip install 'meetscribe[faster-whisper]'"
+        return "uv sync --extra faster-whisper"
     if spec.dependency_present():
         return "ready"
     if spec.extra:
-        return f"pip install 'meetscribe[{spec.extra}]'"
+        return f"uv sync --extra {spec.extra}"
     return "ready"
 
 

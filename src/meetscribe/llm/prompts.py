@@ -19,3 +19,13 @@ SUMMARY_SYSTEM = """你是會議紀錄助理。請依逐字稿撰寫會議摘要
 4. 只回傳 JSON 物件，格式為：
 {"overview":"一段話","key_points":["重點"],"decisions":["決議"],"action_items":[{"task":"事項","owner":null,"due":null}]}
 """
+
+SUMMARY_MERGE_SYSTEM = """你是會議紀錄助理。輸入是同一場會議分段摘要後的 JSON。請合併成一份摘要。
+
+請遵守：
+1. 使用繁體中文（zh-TW）。
+2. 英文技術術語、產品名稱、API、程式識別字、檔名與縮寫保持英文，不要翻譯。
+3. 不要新增各段摘要裡沒有的決議或待辦。重複的條目合併。
+4. 只回傳 JSON 物件，格式為：
+{"overview":"一段話","key_points":["重點"],"decisions":["決議"],"action_items":[{"task":"事項","owner":null,"due":null}]}
+"""

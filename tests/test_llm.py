@@ -3,10 +3,11 @@ import pytest
 from meetscribe.config import AppConfig
 from meetscribe.errors import LlmError
 from meetscribe.llm.client import extract_json_object
+from meetscribe.llm.budget import chunk_items, estimate_tokens
 from meetscribe.llm.factory import build_polisher, build_summarizer
-from meetscribe.llm.polisher import IdentityPolisher, OpenAIPolisher
-from meetscribe.llm.prompts import POLISH_SYSTEM, SUMMARY_SYSTEM
-from meetscribe.llm.summarizer import ExtractiveSummarizer, OpenAISummarizer
+from meetscribe.llm.polisher import OpenAIPolisher
+from meetscribe.llm.prompts import POLISH_SYSTEM, SUMMARY_MERGE_SYSTEM, SUMMARY_SYSTEM
+from meetscribe.llm.summarizer import OpenAISummarizer
 from meetscribe.types import AttributedUtterance
 
 
@@ -72,17 +73,46 @@ def test_summarizer_parses_action_items() -> None:
     assert summary.action_items[1].due is None
 
 
-def test_factory_falls_back_without_api_key() -> None:
+def test_factory_uses_llama_server_without_an_api_key() -> None:
     config = AppConfig()
     polisher = build_polisher(config, environ={})
     summarizer = build_summarizer(config, environ={})
-    assert isinstance(polisher, IdentityPolisher)
-    assert isinstance(summarizer, ExtractiveSummarizer)
-    assert "OPENAI_API_KEY" in polisher.reason
+    assert isinstance(polisher, OpenAIPolisher)
+    assert isinstance(summarizer, OpenAISummarizer)
+    assert polisher.client.api_key == "llama-server"
+    assert polisher.client.base_url == "http://127.0.0.1:8080/v1"
+    assert polisher.client.model == "qwen2.5-14b-instruct"
 
 
 def test_prompts_keep_english_terms_and_traditional_chinese() -> None:
-    for prompt in (POLISH_SYSTEM, SUMMARY_SYSTEM):
+    for prompt in (POLISH_SYSTEM, SUMMARY_SYSTEM, SUMMARY_MERGE_SYSTEM):
         assert "繁體中文" in prompt
         assert "英文" in prompt
         assert "zh-TW" in prompt
+
+
+def test_polish_and_summary_split_on_token_budget() -> None:
+    assert estimate_tokens("API") < estimate_tokens("會議摘要")
+    chat = FakeChat('{"utterances": []}')
+    utterances = [_utterance("甲" * 40, index) for index in range(3)]
+    OpenAIPolisher(chat, token_budget=30).polish(utterances)
+    assert len(chat.calls) == 3
+
+    summary_chat = FakeChat("")
+    calls: list[str] = []
+
+    def complete(*, system: str, user: str) -> str:
+        calls.append(system)
+        return '{"overview": "分段", "key_points": ["一"], "decisions": [], "action_items": []}'
+
+    summary_chat.complete = complete  # type: ignore[method-assign]
+    long_lines = [f"第{index}句 " + ("討論 API " * 30) for index in range(4)]
+    chunks = chunk_items(long_lines, lambda line: line, 80)
+    assert len(chunks) > 1
+    OpenAISummarizer(summary_chat, token_budget=80).summarize(
+        [_utterance("討論 API " * 30, index) for index in range(4)],
+        title="週會",
+    )
+    assert calls[0] == SUMMARY_SYSTEM
+    assert calls[-1] == SUMMARY_MERGE_SYSTEM
+    assert len(calls) >= 3

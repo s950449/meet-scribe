@@ -7,13 +7,13 @@ If the export rejects Breeze, export openai/whisper-large-v3-turbo and point
 asr.model at that directory. meetscribe will also do that fallback when the
 turbo IR exists and the Breeze IR does not.
 
-    pip install -U "optimum-intel[openvino]"
-    python scripts/export_openvino.py --convert
-    python scripts/export_openvino.py --model openai/whisper-large-v3-turbo --convert
+    uv sync --extra openvino
+    uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py --convert
+    uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py --model openai/whisper-large-v3-turbo --convert
 
 GPU inference then uses:
 
-    meetscribe transcribe meeting.wav --asr-backend openvino
+    uv run meetscribe transcribe meeting.wav --asr-backend openvino
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def main() -> int:
         return 0
     cli = shutil.which("optimum-cli")
     if cli is None:
-        print("optimum-cli is not on PATH. pip install -U 'optimum-intel[openvino]'", file=sys.stderr)
+        print("optimum-cli is not on PATH. uv run --with 'optimum-intel[openvino]' python scripts/export_openvino.py --convert", file=sys.stderr)
         return 1
     output.mkdir(parents=True, exist_ok=True)
     command = [

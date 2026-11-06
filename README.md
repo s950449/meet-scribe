@@ -26,31 +26,33 @@ meetscribe records a meeting as separate microphone and system tracks, transcrib
 Python 3.11 or newer.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync
+uv run meetscribe --help
+uv run meetscribe backends
+uv run pytest
 ```
 
 CPU transcription:
 
 ```bash
-pip install -e ".[faster-whisper]"
+uv sync --extra faster-whisper
+uv run meetscribe backends
 ```
 
 Other extras, installed on the machine that will actually run them:
 
 | Extra | Install | Used by |
 | --- | --- | --- |
-| `mlx` | `pip install -e ".[mlx]"` on Apple Silicon | MLX ASR |
-| `vulkan` or `whisper-cpp` | see Vulkan section; the PyPI wheel is CPU-only | whisper.cpp |
-| `openvino` | `pip install -e ".[openvino]"` | OpenVINO ASR |
-| `diarization` | `pip install -e ".[diarization]"` | pyannote |
-| `capture-linux` | `pip install -e ".[capture-linux]"` | Pulse/PipeWire recording |
-| `capture-windows` | `pip install -e ".[capture-windows]"` | WASAPI loopback |
-| `capture-macos` | `pip install -e ".[capture-macos]"` plus the Swift helper | ScreenCaptureKit + mic |
-| `audio` | `pip install -e ".[audio]"` | FLAC, OGG, float WAV |
-| `dev` | `pip install -e ".[dev]"` | pytest |
-| `sherpa` | `pip install -e ".[sherpa]"` | still a stub |
+| `mlx` | `uv sync --extra mlx` (marker: macOS arm64 only) | MLX ASR |
+| `vulkan` or `whisper-cpp` | `uv sync --extra vulkan`; the PyPI wheel is CPU-only | whisper.cpp |
+| `openvino` | `uv sync --extra openvino` (marker: Linux and Windows) | OpenVINO ASR |
+| `diarization` | `uv sync --extra diarization` | pyannote |
+| `capture-linux` | `uv sync --extra capture-linux` | Pulse/PipeWire recording |
+| `capture-windows` | `uv sync --extra capture-windows` (marker: Windows) | WASAPI loopback |
+| `capture-macos` | `uv sync --extra capture-macos` (marker: macOS) plus the Swift helper | ScreenCaptureKit + mic |
+| `audio` | `uv sync --extra audio` | FLAC, OGG, float WAV |
+| dev group | `uv sync` installs it | pytest |
+| `sherpa` | `uv sync --extra sherpa` | still a stub |
 
 m4a and mp3 need ffmpeg. Convert first, then point the CLI at the wav:
 
@@ -84,7 +86,7 @@ With `--json-events`, progress is one JSON object per line on stdout. Human text
 ```json
 {"event":"stage","stage":"asr","status":"start","track_id":"mic","message":"Transcribing mic"}
 {"event":"stage","stage":"asr","status":"done","track_id":"mic","message":"mic: 12 segment(s)","data":{"segments":12}}
-{"event":"log","stage":"summarize","message":"No API key in OPENAI_API_KEY. Writing an extractive summary instead of calling the LLM."}
+{"event":"stage","stage":"polish","status":"start","message":"Polishing with qwen2.5-14b-instruct at http://127.0.0.1:8080/v1"}
 {"event":"error","stage":"pipeline","status":"error","message":"..."}
 ```
 
@@ -151,9 +153,9 @@ Breeze-ASR-25 is a Transformers Whisper checkpoint. faster-whisper substitutes l
 MLX, on Apple Silicon. The default repo is already converted, so this is only for a local rebuild:
 
 ```bash
-python scripts/convert_mlx.py
+uv run python scripts/convert_mlx.py
 git clone https://github.com/ml-explore/mlx-examples.git
-python scripts/convert_mlx.py --convert \
+uv run python scripts/convert_mlx.py --convert \
   --convert-script mlx-examples/whisper/convert.py \
   --torch-name-or-path MediaTek-Research/Breeze-ASR-25 \
   --mlx-path ~/.cache/meetscribe/models/breeze-asr-25-mlx
@@ -168,8 +170,7 @@ python scripts/convert_ggml.py
 # large-v3-turbo without a conversion: download ggml-large-v3-turbo.bin from
 # https://huggingface.co/ggerganov/whisper.cpp into ~/.cache/meetscribe/models/
 git clone https://github.com/ggml-org/whisper.cpp.git
-pip install huggingface_hub torch transformers
-python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
+uv run --with huggingface_hub --with torch --with transformers python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
 cmake -B whisper.cpp/build -S whisper.cpp -DGGML_VULKAN=1
 cmake --build whisper.cpp/build --target whisper-cli -j
 export MEETSCRIBE_WHISPER_CPP="$PWD/whisper.cpp/build/bin/whisper-cli"
@@ -178,19 +179,18 @@ export MEETSCRIBE_WHISPER_CPP="$PWD/whisper.cpp/build/bin/whisper-cli"
 A Vulkan-enabled Python binding, instead of the CLI:
 
 ```bash
-GGML_VULKAN=1 pip install --no-binary pywhispercpp 'meetscribe[vulkan]'
+GGML_VULKAN=1 uv pip install --no-binary pywhispercpp pywhispercpp
 ```
 
-The stock `pip install pywhispercpp` wheel is CPU. `meetscribe backends` says whether a Vulkan ICD was found. `whisper-cli` wins over pywhispercpp when `MEETSCRIBE_WHISPER_CPP` or `whisper-cli` is on `PATH`.
+The stock pywhispercpp wheel is CPU. `meetscribe backends` says whether a Vulkan ICD was found. `whisper-cli` wins over pywhispercpp when `MEETSCRIBE_WHISPER_CPP` or `whisper-cli` is on `PATH`.
 
 OpenVINO:
 
 ```bash
-pip install -U "optimum-intel[openvino]" "meetscribe[openvino]"
-python scripts/export_openvino.py
-python scripts/export_openvino.py --convert
-python scripts/export_openvino.py --model openai/whisper-large-v3-turbo --convert
-meetscribe transcribe meeting.wav --asr-backend openvino
+uv sync --extra openvino
+uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py --convert
+uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py --model openai/whisper-large-v3-turbo --convert
+uv run meetscribe transcribe meeting.wav --asr-backend openvino
 ```
 
 `auto` picks `GPU` when OpenVINO lists one, otherwise CPU. Override with `MEETSCRIBE_OPENVINO_DEVICE=CPU` or `[asr] openvino_device`.
@@ -200,26 +200,26 @@ meetscribe transcribe meeting.wav --asr-backend openvino
 Linux needs PipeWire or PulseAudio (`pactl`) and sounddevice. System audio is the sink `.monitor` source.
 
 ```bash
-pip install -e ".[capture-linux]"
-meetscribe devices
-meetscribe record -o ./recording --mic-device alsa_input --system-device monitor
+uv sync --extra capture-linux
+uv run meetscribe devices
+uv run meetscribe record -o ./recording --mic-device alsa_input --system-device monitor
 ```
 
 Windows uses WASAPI loopback from PyAudioWPatch, so the meeting audio is the render endpoint and the headset is a separate capture endpoint.
 
 ```bash
-pip install -e ".[capture-windows]"
-meetscribe devices
-meetscribe record -o .\recording
+uv sync --extra capture-windows
+uv run meetscribe devices
+uv run meetscribe record -o .\recording
 ```
 
 macOS uses sounddevice for the microphone and a Swift ScreenCaptureKit helper for system audio. PyObjC's completion-handler wrapping of ScreenCaptureKit is brittle across OS releases, and the process that calls it needs Screen Recording permission. A tiny helper keeps that permission on one binary and writes 48 kHz s16le PCM to stdout. Python stamps each read with `time.monotonic()`, the same clock as the mic callback, and the sync session absorbs the few milliseconds of pipe delay the same way it absorbs device drift.
 
 ```bash
-pip install -e ".[capture-macos]"
+uv sync --extra capture-macos
 swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift
 # System Settings → Privacy & Security → Screen Recording → allow the terminal
-meetscribe record -o ./recording
+uv run meetscribe record -o ./recording
 ```
 
 `session.json` next to the wavs reports silence inserted and samples dropped per track.
@@ -230,8 +230,8 @@ Run `meetscribe backends` first and confirm `usable=yes` for the backend you are
 
 Apple Silicon
 
-1. `pip install -e ".[mlx,capture-macos]"`, compile the Swift helper, allow Screen Recording.
-2. `meetscribe backends` shows `mlx-whisper` usable and `macos` usable.
+1. `uv sync --extra mlx --extra capture-macos`, compile the Swift helper, allow Screen Recording.
+2. `uv run meetscribe backends` shows `mlx-whisper` usable and `macos` usable.
 3. Play a Traditional Chinese / English clip. `meetscribe record -o /tmp/take --duration 20`.
 4. Confirm `mic.wav` and `system.wav` are both non-silent, similar length, and `session.json` has small silence/dropped times.
 5. `meetscribe transcribe /tmp/take --asr-backend mlx-whisper --diarization pyannote`. The note is Traditional Chinese, English product names stay in English, and remote speakers are not all labeled `Me`.
@@ -239,7 +239,7 @@ Apple Silicon
 
 Windows, Intel iGPU
 
-1. `pip install -e ".[openvino,capture-windows]"` and export an IR with `scripts/export_openvino.py --convert`.
+1. `uv sync --extra openvino --extra capture-windows` and export an IR with `scripts/export_openvino.py --convert`.
 2. Build `whisper-cli` with `-DGGML_VULKAN=1` and set `MEETSCRIBE_WHISPER_CPP`.
 3. `meetscribe backends` shows `openvino` usable with a GPU device, and `vulkan` usable with an ICD.
 4. Join a browser meeting. `meetscribe record -o .\take --duration 30`. Mic and system wavs differ.
@@ -248,7 +248,7 @@ Windows, Intel iGPU
 
 Linux, Intel iGPU or any Vulkan GPU
 
-1. `pip install -e ".[capture-linux,openvino,vulkan]"`. Export IR. Build Vulkan `whisper-cli`.
+1. `uv sync --extra capture-linux --extra openvino --extra vulkan`. Export IR. Build Vulkan `whisper-cli`.
 2. `meetscribe devices` lists a `.monitor` source and a mic.
 3. `meetscribe record -o /tmp/take --duration 15` while audio plays through the speakers. `system.wav` follows that playback; `mic.wav` follows the microphone.
 4. `meetscribe transcribe /tmp/take --asr-backend openvino` and `--asr-backend vulkan`.
@@ -274,29 +274,59 @@ Secrets are read from the environment at call time. `api_key` and `hf_token` in 
 
 ```toml
 [llm]
-base_url = "http://127.0.0.1:11434/v1"
+base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
-model = "qwen2.5:14b"
+model = "qwen2.5-14b-instruct"
 polish = true
+context_tokens = 8192
+reserve_tokens = 1536
 
 [diarization]
 hf_token_env = "HF_TOKEN"
 ```
 
+`OPENAI_BASE_URL` still overrides `base_url` when you point at another OpenAI-compatible server (LM Studio, vLLM, or `https://api.openai.com/v1`). Set `OPENAI_API_KEY` for those servers. llama-server does not check a key; when the variable is unset the client sends the dummy value `llama-server`. In single-model mode llama-server also ignores the `model` field. `context_tokens` should be less than or equal to the server's `-c`. Transcripts that would exceed that budget, minus `reserve_tokens` and the system prompt, are polished and summarized in chunks, then the partial summaries are merged.
+
+`transcribe` still skips the summary stage. Prompts ask for JSON, Traditional Chinese, and English technical terms kept in English. They live in `src/meetscribe/llm/prompts.py`.
+
+## llama-server
+
+The default local endpoint is llama.cpp's `llama-server` on port 8080. A suggested GGUF for Traditional Chinese plus English meeting notes is **Qwen2.5-14B-Instruct Q5_K_M** (for example `bartowski/Qwen2.5-14B-Instruct-GGUF`, file `Qwen2.5-14B-Instruct-Q5_K_M.gguf`). That is a suggestion, not a requirement. On a smaller Intel iGPU, Qwen2.5-7B-Instruct Q5_K_M is the lighter alternative. Keep `-c` aligned with `[llm].context_tokens`.
+
+CPU:
+
 ```bash
-export OPENAI_API_KEY="local"          # Ollama ignores the value but the client requires one
-export OPENAI_BASE_URL="http://127.0.0.1:11434/v1"   # optional; overrides the file
+cmake -B build
+cmake --build build --config Release -j
+./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 --host 127.0.0.1 --port 8080
 ```
 
-The same shape works for LM Studio (`http://127.0.0.1:1234/v1`), vLLM, llama.cpp's server, and the public OpenAI API (`https://api.openai.com/v1` plus a real key). The client is the official `openai` package:
+Metal (Apple Silicon). `GGML_METAL` is on by default in macOS builds; the flag is explicit here:
 
-```python
-OpenAI(base_url=config.llm.base_url, api_key=api_key).chat.completions.create(...)
+```bash
+cmake -B build -DGGML_METAL=ON
+cmake --build build --config Release -j
+./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 -ngl 99 --host 127.0.0.1 --port 8080
 ```
 
-Without a key, polish copies ASR text through and summarize writes a short extractive overview marked `（未呼叫 LLM…）`. `transcribe` always skips the summary stage.
+Vulkan (Windows or Linux, including Intel iGPUs):
 
-Prompts ask for JSON, Traditional Chinese, and English technical terms kept in English. They live in `src/meetscribe/llm/prompts.py`.
+```bash
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build --config Release -j
+./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 -ngl 99 --host 127.0.0.1 --port 8080
+```
+
+SYCL (Intel iGPU via oneAPI):
+
+```bash
+source /opt/intel/oneapi/setvars.sh
+cmake -B build -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx
+cmake --build build --config Release -j
+./build/bin/llama-server -m Qwen2.5-14B-Instruct-Q5_K_M.gguf -c 8192 -ngl 99 --host 127.0.0.1 --port 8080
+```
+
+Then `uv run meetscribe run meeting.wav`. The client calls `http://127.0.0.1:8080/v1/chat/completions`.
 
 ## Add a backend
 
@@ -324,11 +354,11 @@ A GUI should call `run_meeting` or `summarize_file` with an object that implemen
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
-PYTHONPATH=src python examples/sample_meeting.py
+uv sync
+uv run pytest
+uv run python examples/sample_meeting.py
 ```
 
-`pytest` covers speaker assignment, Markdown rendering, config precedence, the registry (including a fake backend), WAV normalization, the LLM JSON parsers, and an end-to-end run with fake ASR and summarizer.
+`uv run pytest` covers speaker assignment, Markdown rendering, config precedence, the registry (including a fake backend), WAV normalization, the LLM JSON parsers, and an end-to-end run with fake ASR and summarizer.
 
 The checked-in note is `examples/sample_meeting.md`.

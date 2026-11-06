@@ -65,7 +65,7 @@ def _load_transcribe() -> Callable[..., dict[str, object]]:
         import mlx_whisper
     except ImportError as exc:
         raise BackendNotInstalled(
-            "mlx-whisper is not installed. On Apple Silicon: pip install 'meetscribe[mlx]'"
+            "mlx-whisper is not installed. On Apple Silicon: uv sync --extra mlx"
         ) from exc
     return mlx_whisper.transcribe
 

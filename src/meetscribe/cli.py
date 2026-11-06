@@ -372,7 +372,7 @@ def _device_report() -> str:
     if system == "Linux":
         pactl = shutil.which("pactl")
         if pactl is None:
-            lines.append("  pactl is not installed. Install PipeWire or PulseAudio, then pip install 'meetscribe[capture-linux]'.")
+            lines.append("  pactl is not installed. Install PipeWire or PulseAudio, then uv sync --extra capture-linux.")
             return "\n".join(lines)
         completed = subprocess.run(
             [pactl, "list", "short", "sources"],
@@ -389,11 +389,11 @@ def _device_report() -> str:
             lines.append("  No PulseAudio/PipeWire sources.")
         for source in sources:
             lines.append(f"  {source.kind:<8} {source.id:>4}  {source.name}")
-        lines.append("  Record with pip install 'meetscribe[capture-linux]'. Ctrl+C stops.")
+        lines.append("  Record with uv sync --extra capture-linux. Ctrl+C stops.")
         return "\n".join(lines)
     if system == "Windows":
         lines.append("  WASAPI devices come from PyAudioWPatch.")
-        lines.append("  pip install 'meetscribe[capture-windows]'")
+        lines.append("  uv sync --extra capture-windows")
         try:
             from meetscribe.audio.windows import list_wasapi_devices
 
@@ -408,7 +408,7 @@ def _device_report() -> str:
         return "\n".join(lines)
     if system == "Darwin":
         lines.append("  System audio is ScreenCaptureKit via scripts/macos/SystemAudioCapture.swift.")
-        lines.append("  Microphones are Core Audio inputs. pip install 'meetscribe[capture-macos]'")
+        lines.append("  Microphones are Core Audio inputs. uv sync --extra capture-macos")
         lines.append("  swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift")
         return "\n".join(lines)
     lines.append("  No capture backend for this operating system. Transcribe existing wav files.")

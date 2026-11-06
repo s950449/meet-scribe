@@ -1,7 +1,7 @@
 # Copy to ~/.config/meetscribe/config.toml and edit.
 # Do not put API keys or HF tokens in this file.
-#   export OPENAI_API_KEY=...
 #   export HF_TOKEN=...          # only for the pyannote backend
+#   export OPENAI_API_KEY=...    # optional; llama-server does not need one
 #   export OPENAI_BASE_URL=...   # optional override of [llm].base_url
 
 output_dir = "~/Meetings"
@@ -21,10 +21,13 @@ backend = "auto" # auto | track | single-speaker | pyannote | sherpa-onnx
 hf_token_env = "HF_TOKEN"
 
 [llm]
-base_url = "http://127.0.0.1:11434/v1"
+# llama.cpp llama-server. The model name is a label; single-model llama-server ignores it.
+base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
-model = "gpt-4o-mini"
+model = "qwen2.5-14b-instruct"
 polish = true
+context_tokens = 8192
+reserve_tokens = 1536
 
 [capture]
 backend = "auto" # auto | file | macos | windows | linux

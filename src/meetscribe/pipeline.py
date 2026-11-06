@@ -197,8 +197,7 @@ def summarize_file(
         events.emit(
             log_event(
                 "summarize",
-                f"No API key in {config.llm.api_key_env}. Writing an extractive summary. "
-                f"Set the variable and base_url ({config.llm.base_url}) to call an OpenAI-compatible model.",
+                "Writing an extractive summary without calling the LLM endpoint " f"at {config.llm.base_url}.",
             )
         )
     document.summary = chosen.summarize(  # type: ignore[attr-defined]
@@ -300,8 +299,7 @@ def _summarize(config, utterances, events, summarizer, do_summary, title, enviro
         events.emit(
             log_event(
                 "summarize",
-                f"No API key in {config.llm.api_key_env}. "
-                "Writing an extractive summary instead of calling the LLM.",
+                "Writing an extractive summary without calling the LLM endpoint.",
             )
         )
     else:

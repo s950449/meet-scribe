@@ -6,8 +6,9 @@ import json
 from collections.abc import Callable, Sequence
 
 from meetscribe.errors import LlmError
+from meetscribe.llm.budget import chunk_items
 from meetscribe.llm.client import ChatClient, extract_json_object
-from meetscribe.llm.prompts import SUMMARY_SYSTEM
+from meetscribe.llm.prompts import SUMMARY_MERGE_SYSTEM, SUMMARY_SYSTEM
 from meetscribe.timestamps import format_timestamp
 from meetscribe.types import ActionItem, AttributedUtterance, MeetingSummary, ProgressEvent
 
@@ -15,8 +16,9 @@ from meetscribe.types import ActionItem, AttributedUtterance, MeetingSummary, Pr
 class OpenAISummarizer:
     name = "openai"
 
-    def __init__(self, client: ChatClient) -> None:
+    def __init__(self, client: ChatClient, *, token_budget: int = 6000) -> None:
         self.client = client
+        self.token_budget = token_budget
 
     def summarize(
         self,
@@ -27,15 +29,33 @@ class OpenAISummarizer:
         on_event: Callable[[ProgressEvent], None] | None = None,
     ) -> MeetingSummary:
         del on_event
-        user = json.dumps(
-            {
-                "title": title,
-                "transcript": _transcript(utterances, speaker_map or {}),
-            },
-            ensure_ascii=False,
+        labels = speaker_map or {}
+        lines = [
+            f"[{format_timestamp(utterance.start)}] {labels.get(utterance.speaker_id, utterance.speaker_id)}: {utterance.display_text}"
+            for utterance in utterances
+        ]
+        chunks = chunk_items(lines, lambda line: line, self.token_budget) or [[]]
+        partials = [
+            extract_json_object(
+                self.client.complete(
+                    system=SUMMARY_SYSTEM,
+                    user=json.dumps(
+                        {"title": title, "transcript": "\n".join(chunk)},
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+            for chunk in chunks
+        ]
+        if len(partials) == 1:
+            return _summary_from_json(partials[0])
+        merged = extract_json_object(
+            self.client.complete(
+                system=SUMMARY_MERGE_SYSTEM,
+                user=json.dumps({"title": title, "partials": partials}, ensure_ascii=False),
+            )
         )
-        data = extract_json_object(self.client.complete(system=SUMMARY_SYSTEM, user=user))
-        return _summary_from_json(data)
+        return _summary_from_json(merged)
 
 
 class ExtractiveSummarizer:
@@ -63,14 +83,6 @@ class ExtractiveSummarizer:
             overview = "（未呼叫 LLM，以下為抽取式摘要。）" + texts[0][:400]
             points = tuple(texts[:5])
         return MeetingSummary(overview=overview, key_points=points, decisions=(), action_items=())
-
-
-def _transcript(utterances: Sequence[AttributedUtterance], speaker_map: dict[str, str]) -> str:
-    lines: list[str] = []
-    for utterance in utterances:
-        label = speaker_map.get(utterance.speaker_id, utterance.speaker_id)
-        lines.append(f"[{format_timestamp(utterance.start)}] {label}: {utterance.display_text}")
-    return "\n".join(lines)
 
 
 def _summary_from_json(data: dict[str, object]) -> MeetingSummary:

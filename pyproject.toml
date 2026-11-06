@@ -24,16 +24,18 @@ dependencies = [
 
 [project.optional-dependencies]
 faster-whisper = ["faster-whisper>=1.0.3"]
-mlx = ["mlx-whisper>=0.4.1"]
-openvino = ["openvino-genai>=2024.4.0"]
 vulkan = ["pywhispercpp>=1.2.0"]
 whisper-cpp = ["pywhispercpp>=1.2.0"]
 diarization = ["pyannote.audio>=3.3"]
 sherpa = ["sherpa-onnx>=1.10"]
 audio = ["soundfile>=0.12"]
-capture-linux = ["sounddevice>=0.5"]
-capture-macos = ["sounddevice>=0.5"]
-capture-windows = ["PyAudioWPatch>=0.2.12"]
+capture-linux = ["sounddevice>=0.5; sys_platform == 'linux'"]
+capture-macos = ["sounddevice>=0.5; sys_platform == 'darwin'"]
+capture-windows = ["PyAudioWPatch>=0.2.12; sys_platform == 'win32'"]
+mlx = ["mlx-whisper>=0.4.1; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+openvino = ["openvino-genai>=2024.4.0; sys_platform == 'linux' or sys_platform == 'win32'"]
+
+[dependency-groups]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
@@ -48,6 +50,10 @@ artifacts = [
     "src/meetscribe/py.typed",
     "src/meetscribe/render/templates/*.j2",
 ]
+
+[tool.uv]
+package = true
+default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -40,7 +40,7 @@ class SherpaDiarizer:
             import sherpa_onnx  # noqa: F401
         except ImportError as exc:
             raise BackendNotInstalled(
-                "sherpa-onnx is not installed. Install it with: pip install 'meetscribe[sherpa]'"
+                "sherpa-onnx is not installed. Install it with: uv sync --extra sherpa"
             ) from exc
         raise BackendNotImplemented(
             "sherpa-onnx diarization is not wired up yet. "

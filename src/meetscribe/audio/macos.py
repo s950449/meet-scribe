@@ -104,7 +104,7 @@ class MacOSCapture:
             "  swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift\n"
             "Grant Screen Recording permission to the terminal, then record again. "
             "The microphone still uses Core Audio through sounddevice "
-            "(pip install 'meetscribe[capture-macos]')."
+            "(uv sync --extra capture-macos)."
         )
 
 
@@ -114,7 +114,7 @@ class _MicStream:
             import sounddevice as sd
         except ImportError as exc:
             raise BackendNotInstalled(
-                "sounddevice is not installed. On macOS: pip install 'meetscribe[capture-macos]'"
+                "sounddevice is not installed. On macOS: uv sync --extra capture-macos"
             ) from exc
         resolved: object = None if device.id in {"", "default"} else device.id
         if isinstance(resolved, str) and resolved.isdigit():

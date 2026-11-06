@@ -148,6 +148,6 @@ def _load_model(model_id: str, device: str, compute_type: str) -> object:
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise BackendNotInstalled(
-            "faster-whisper is not installed. Install it with: pip install 'meetscribe[faster-whisper]'"
+            "faster-whisper is not installed. Install it with: uv sync --extra faster-whisper"
         ) from exc
     return WhisperModel(model_id, device=device, compute_type=compute_type)

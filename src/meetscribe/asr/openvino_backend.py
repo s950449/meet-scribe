@@ -113,7 +113,7 @@ def _import_pipeline() -> Callable[..., object]:
         from openvino_genai import WhisperPipeline
     except ImportError as exc:
         raise BackendNotInstalled(
-            "openvino-genai is not installed. pip install 'meetscribe[openvino]'"
+            "openvino-genai is not installed. uv sync --extra openvino"
         ) from exc
     return WhisperPipeline
 

@@ -7,9 +7,8 @@ There is no maintained public GGML build of Breeze-ASR-25. large-v3-turbo
 GGML weights are published by ggerganov/whisper.cpp as ggml-large-v3-turbo.bin
 and can be dropped in ~/.cache/meetscribe/models/ without conversion.
 
-    pip install huggingface_hub torch transformers
     git clone https://github.com/ggml-org/whisper.cpp.git
-    python scripts/convert_ggml.py --whisper-cpp whisper.cpp
+    uv run --with huggingface_hub --with torch --with transformers python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
 
 Vulkan runtime (separate from conversion):
 
@@ -19,7 +18,7 @@ Vulkan runtime (separate from conversion):
 
 Or build the Python binding against that tree:
 
-    GGML_VULKAN=1 pip install --no-binary pywhispercpp pywhispercpp
+    GGML_VULKAN=1 uv pip install --no-binary pywhispercpp pywhispercpp
 """
 
 from __future__ import annotations
@@ -80,7 +79,7 @@ def _download(model: str) -> Path:
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
-        raise SystemExit("pip install huggingface_hub") from exc
+        raise SystemExit("uv run --with huggingface_hub python scripts/convert_ggml.py --convert") from exc
     path = snapshot_download(model)
     return Path(path)
 

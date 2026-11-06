@@ -107,7 +107,7 @@ def _sources_from_sounddevice() -> list[AudioDevice]:
     except ImportError as exc:
         raise BackendNotInstalled(
             "Linux capture needs PulseAudio/PipeWire (`pactl`) or sounddevice. "
-            "pip install 'meetscribe[capture-linux]'"
+            "uv sync --extra capture-linux"
         ) from exc
     devices: list[AudioDevice] = []
     for index, info in enumerate(sd.query_devices()):
@@ -124,7 +124,7 @@ def _open_sounddevice(device: AudioDevice, track_id: str, session: SyncedWavSess
         import sounddevice as sd
     except ImportError as exc:
         raise BackendNotInstalled(
-            "sounddevice is not installed. pip install 'meetscribe[capture-linux]'"
+            "sounddevice is not installed. uv sync --extra capture-linux"
         ) from exc
     resolved = _resolve_input(sd, device)
 

@@ -17,6 +17,10 @@ from meetscribe.errors import ConfigError
 
 DEFAULT_ASR_MODEL = "MediaTek-Research/Breeze-ASR-25"
 DEFAULT_FALLBACK_MODEL = "openai/whisper-large-v3-turbo"
+DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8080/v1"
+DEFAULT_LLM_MODEL = "qwen2.5-14b-instruct"
+# Sent only when OPENAI_API_KEY is unset. llama-server does not check it.
+DUMMY_API_KEY = "llama-server"
 SECRET_KEYS = frozenset({"api_key", "hf_token", "token", "openai_api_key"})
 
 
@@ -40,10 +44,14 @@ class DiarizationSettings:
 
 @dataclass
 class LlmSettings:
-    base_url: str = "http://127.0.0.1:11434/v1"
+    base_url: str = DEFAULT_LLM_BASE_URL
     api_key_env: str = "OPENAI_API_KEY"
-    model: str = "gpt-4o-mini"
+    model: str = DEFAULT_LLM_MODEL
     polish: bool = True
+    # Match llama-server -c. Long transcripts are split to stay under this.
+    context_tokens: int = 8192
+    # Room for the system prompt's completion. Not sent to the server.
+    reserve_tokens: int = 1536
 
 
 @dataclass
@@ -68,6 +76,11 @@ class AppConfig:
         env = os.environ if environ is None else environ
         value = env.get(self.llm.api_key_env, "").strip()
         return value or None
+
+    def resolved_api_key(self, environ: Mapping[str, str] | None = None) -> str:
+        """Key for the OpenAI client. llama-server accepts the dummy value."""
+
+        return self.api_key(environ) or DUMMY_API_KEY
 
     def hf_token(self, environ: Mapping[str, str] | None = None) -> str | None:
         env = os.environ if environ is None else environ
@@ -162,6 +175,10 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
         llm = replace(llm, model=str(overrides["llm_model"]))
     if "llm_polish" in overrides and overrides["llm_polish"] is not None:
         llm = replace(llm, polish=bool(overrides["llm_polish"]))
+    if "context_tokens" in overrides and overrides["context_tokens"] is not None:
+        llm = replace(llm, context_tokens=int(overrides["context_tokens"]))
+    if "reserve_tokens" in overrides and overrides["reserve_tokens"] is not None:
+        llm = replace(llm, reserve_tokens=int(overrides["reserve_tokens"]))
     if "capture_backend" in overrides and overrides["capture_backend"] is not None:
         capture = replace(capture, backend=str(overrides["capture_backend"]))
     if "mic_device" in overrides and overrides["mic_device"] is not None:
@@ -272,6 +289,10 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         if not isinstance(polish, bool):
             raise ConfigError("[llm].polish must be a boolean")
         llm = replace(llm, polish=polish)
+    if "context_tokens" in llm_table:
+        llm = replace(llm, context_tokens=int(llm_table["context_tokens"]))
+    if "reserve_tokens" in llm_table:
+        llm = replace(llm, reserve_tokens=int(llm_table["reserve_tokens"]))
 
     capture_table = _table(data.get("capture"), "capture")
     if "backend" in capture_table:
