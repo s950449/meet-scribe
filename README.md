@@ -17,7 +17,7 @@ meetscribe records a meeting as separate microphone and system tracks, transcrib
 | pyannote `speaker-diarization-community-1` on the system track | Implemented, extra `diarization`, needs `HF_TOKEN` |
 | Live mic + system recording (macOS, Windows, Linux) and `--live` chunk transcripts | Implemented |
 | sherpa-onnx diarization | Stub |
-| OpenAI-compatible polish and summary, or an offline fallback when no API key is set | Implemented |
+| OpenAI-compatible polish and summary; raw transcription without an LLM via `transcribe --no-polish` | Implemented |
 
 `meetscribe backends` prints `usable=yes` only when this machine can actually run that backend. Weights are not downloaded by the test suite, and the tests do not open a microphone. `examples/sample_meeting.md` is rendered from hand-written utterances. The checklist at the end is the hardware pass for MLX, Vulkan, OpenVINO, and live recording.
 
@@ -218,11 +218,24 @@ uv run meetscribe record -o .\recording
 macOS uses sounddevice for the microphone and a Swift ScreenCaptureKit helper for system audio. PyObjC's completion-handler wrapping of ScreenCaptureKit is brittle across OS releases, and the process that calls it needs Screen Recording permission. A tiny helper keeps that permission on one binary and writes 48 kHz s16le PCM to stdout. Python stamps each read with `time.monotonic()`, the same clock as the mic callback, and the sync session absorbs the few milliseconds of pipe delay the same way it absorbs device drift.
 
 ```bash
-uv sync --extra capture-macos
-swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift
-# System Settings → Privacy & Security → Screen Recording → allow the terminal
+uv sync --python 3.12 --extra mlx --extra capture-macos
+mkdir -p ~/.local/bin
+swiftc -parse-as-library -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift
+export PATH="$HOME/.local/bin:$PATH"
+# System Settings → Privacy & Security → allow the terminal microphone and screen/system-audio recording access
+uv run meetscribe backends
 uv run meetscribe record -o ./recording
 ```
+
+The install command above targets Apple Silicon. On an Intel Mac, replace `--extra mlx` with `--extra faster-whisper`. Keep the selected extras when running `uv sync` again. Add the PATH export to `~/.zshrc` to make the helper discoverable in future shells.
+
+Before starting an LLM server, verify transcription with:
+
+```bash
+uv run meetscribe transcribe ./recording --no-polish -o notes/test.md
+```
+
+The first ASR run downloads the model weights. `transcribe` skips summarization, but polishing is enabled by default, so `--no-polish` is required to avoid LLM requests. `run` and `summarize` require a running OpenAI-compatible server. An unset API key uses a dummy bearer for a local server; it does not select an offline summary or start the server automatically.
 
 `session.json` next to the wavs reports silence inserted and samples dropped per track.
 

@@ -101,7 +101,9 @@ class MacOSCapture:
             return found
         raise AudioError(
             "macOS system audio needs the ScreenCaptureKit helper. From the repo:\n"
-            "  swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift\n"
+            "  mkdir -p ~/.local/bin\n"
+            "  swiftc -parse-as-library -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift\n"
+            "  export PATH=\"$HOME/.local/bin:$PATH\"\n"
             "Grant Screen Recording permission to the terminal, then record again. "
             "The microphone still uses Core Audio through sounddevice "
             "(uv sync --extra capture-macos)."

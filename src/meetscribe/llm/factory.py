@@ -1,4 +1,4 @@
-"""Choose the live LLM client or the offline fallback."""
+"""Build LLM clients, or bypass polishing when explicitly disabled."""
 
 from __future__ import annotations
 

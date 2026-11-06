@@ -6,7 +6,8 @@ import ScreenCaptureKit
 /// Writes 48 kHz mono s16le PCM to stdout.
 ///
 /// Build:
-///   swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift
+///   mkdir -p ~/.local/bin
+///   swiftc -parse-as-library -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift
 ///
 /// The terminal (or the app that launches this binary) needs Screen Recording permission.
 /// Python stamps each read with the host clock; this process does not write a WAV header.

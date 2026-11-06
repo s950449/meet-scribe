@@ -1,4 +1,4 @@
-"""Meeting summary through an OpenAI-compatible endpoint, with an offline fallback."""
+"""OpenAI-compatible meeting summaries and an injectable extractive summarizer."""
 
 from __future__ import annotations
 
@@ -59,8 +59,9 @@ class OpenAISummarizer:
 
 
 class ExtractiveSummarizer:
-    """Offline summary used when no API key is configured.
+    """Offline summary available for explicit injection into the pipeline.
 
+    The default factory always uses the OpenAI-compatible endpoint.
     The overview is marked so a reader can see that no LLM was called.
     """
 
