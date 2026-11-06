@@ -31,7 +31,11 @@ class OpenAISummarizer:
         del on_event
         labels = speaker_map or {}
         lines = [
-            f"[{format_timestamp(utterance.start)}] {labels.get(utterance.speaker_id, utterance.speaker_id)}: {utterance.display_text}"
+            (
+                f"[{format_timestamp(utterance.start)}] "
+                f"{labels.get(utterance.speaker_id, utterance.speaker_id)}: "
+                f"{utterance.display_text}"
+            )
             for utterance in utterances
         ]
         chunks = chunk_items(lines, lambda line: line, self.token_budget) or [[]]
@@ -76,7 +80,11 @@ class ExtractiveSummarizer:
         on_event: Callable[[ProgressEvent], None] | None = None,
     ) -> MeetingSummary:
         del title, speaker_map, on_event
-        texts = [utterance.display_text.strip() for utterance in utterances if utterance.display_text.strip()]
+        texts = [
+            utterance.display_text.strip()
+            for utterance in utterances
+            if utterance.display_text.strip()
+        ]
         if not texts:
             overview = "（未呼叫 LLM，逐字稿是空的。）"
             points: tuple[str, ...] = ()

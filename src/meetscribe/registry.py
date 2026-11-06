@@ -90,7 +90,10 @@ def _asr_specs() -> list[BackendSpec]:
         BackendSpec(
             kind="asr",
             name="faster-whisper",
-            description="CTranslate2 Whisper on CPU. Uses the fallback model when the checkpoint is not CT2.",
+            description=(
+                "CTranslate2 Whisper on CPU. "
+                "Uses the fallback model when the checkpoint is not CT2."
+            ),
             device="cpu",
             implemented=True,
             factory=_faster_whisper,
@@ -168,7 +171,9 @@ def _diarization_specs() -> list[BackendSpec]:
         BackendSpec(
             kind="diarization",
             name="pyannote",
-            description="pyannote speaker-diarization-community-1 on the system track. Needs HF_TOKEN.",
+            description=(
+                "pyannote speaker-diarization-community-1 on the system track. Needs HF_TOKEN."
+            ),
             device="cpu",
             implemented=True,
             factory=_pyannote,
@@ -248,7 +253,7 @@ def _faster_whisper(config: AppConfig) -> object:
     )
 
 
-def _model_dir(config: AppConfig):
+def _model_dir(config: AppConfig) -> Path:
     from meetscribe.asr.models import default_model_dir
 
     if config.asr.model_dir:
@@ -338,28 +343,34 @@ def _file_input(config: AppConfig) -> object:
     return FileInput()
 
 
-def _capture_kwargs(config: AppConfig) -> dict[str, object]:
-    return {
-        "sample_rate": config.capture.sample_rate,
-        "mic_device": config.capture.mic_device,
-        "system_device": config.capture.system_device,
-        "chunk_seconds": config.capture.chunk_seconds,
-    }
-
-
 def _macos_capture(config: AppConfig) -> object:
     from meetscribe.audio.macos import MacOSCapture
 
-    return MacOSCapture(**_capture_kwargs(config))
+    return MacOSCapture(
+        sample_rate=config.capture.sample_rate,
+        mic_device=config.capture.mic_device,
+        system_device=config.capture.system_device,
+        chunk_seconds=config.capture.chunk_seconds,
+    )
 
 
 def _windows_capture(config: AppConfig) -> object:
     from meetscribe.audio.windows import WindowsCapture
 
-    return WindowsCapture(**_capture_kwargs(config))
+    return WindowsCapture(
+        sample_rate=config.capture.sample_rate,
+        mic_device=config.capture.mic_device,
+        system_device=config.capture.system_device,
+        chunk_seconds=config.capture.chunk_seconds,
+    )
 
 
 def _linux_capture(config: AppConfig) -> object:
     from meetscribe.audio.linux import LinuxCapture
 
-    return LinuxCapture(**_capture_kwargs(config))
+    return LinuxCapture(
+        sample_rate=config.capture.sample_rate,
+        mic_device=config.capture.mic_device,
+        system_device=config.capture.system_device,
+        chunk_seconds=config.capture.chunk_seconds,
+    )

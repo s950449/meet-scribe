@@ -6,6 +6,7 @@ import signal
 import threading
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 from meetscribe.audio.devices import AudioDevice
 from meetscribe.audio.sync import ChunkCallback, SyncedWavSession
@@ -17,7 +18,7 @@ StreamOpener = Callable[[AudioDevice, str, SyncedWavSession, int], object]
 
 
 def run_synced_recording(
-    output_dir,
+    output_dir: Path,
     *,
     devices: list[tuple[str, AudioDevice]],
     opener: StreamOpener,

@@ -8,7 +8,8 @@ GGML weights are published by ggerganov/whisper.cpp as ggml-large-v3-turbo.bin
 and can be dropped in ~/.cache/meetscribe/models/ without conversion.
 
     git clone https://github.com/ggml-org/whisper.cpp.git
-    uv run --with huggingface_hub --with torch --with transformers python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
+    uv run --with huggingface_hub --with torch --with transformers \
+        python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
 
 Vulkan runtime (separate from conversion):
 
@@ -31,9 +32,16 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--model", default="MediaTek-Research/Breeze-ASR-25")
-    parser.add_argument("--whisper-cpp", default="", help="Checkout that contains models/convert-h5-to-ggml.py")
+    parser.add_argument(
+        "--whisper-cpp",
+        default="",
+        help="Checkout that contains models/convert-h5-to-ggml.py",
+    )
     parser.add_argument(
         "--output",
         default="",
@@ -79,7 +87,9 @@ def _download(model: str) -> Path:
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
-        raise SystemExit("uv run --with huggingface_hub python scripts/convert_ggml.py --convert") from exc
+        raise SystemExit(
+            "uv run --with huggingface_hub python scripts/convert_ggml.py --convert"
+        ) from exc
     path = snapshot_download(model)
     return Path(path)
 

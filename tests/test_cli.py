@@ -40,7 +40,12 @@ def test_record_uses_platform_stub(tmp_path: Path) -> None:
     text = result.stdout + getattr(result, "stderr", "")
     assert result.exit_code == 1
     lowered = text.lower()
-    assert "sounddevice" in lowered or "monitor" in lowered or "pactl" in lowered or "not installed" in lowered
+    assert (
+        "sounddevice" in lowered
+        or "monitor" in lowered
+        or "pactl" in lowered
+        or "not installed" in lowered
+    )
 
 
 def test_transcribe_reports_missing_asr_extra(tmp_path: Path) -> None:
@@ -49,7 +54,8 @@ def test_transcribe_reports_missing_asr_extra(tmp_path: Path) -> None:
     result = runner.invoke(app, ["transcribe", str(path), "--output", str(tmp_path / "note.md")])
     text = result.stdout + getattr(result, "stderr", "")
     assert result.exit_code == 1
-    assert "not installed" in text.lower() or "not wired" in text.lower() or "not implemented" in text.lower()
+    lowered = text.lower()
+    assert "not installed" in lowered or "not wired" in lowered or "not implemented" in lowered
 
 
 def test_devices_does_not_start_recording() -> None:

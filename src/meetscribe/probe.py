@@ -36,9 +36,7 @@ def platform_matches(spec: BackendSpec, hardware: HardwareInfo) -> bool:
         return True
     if system == "linux" and "linux" in tags:
         return True
-    if system == "windows" and "windows" in tags:
-        return True
-    return False
+    return system == "windows" and "windows" in tags
 
 
 def module_available(name: str | None) -> bool:
@@ -63,7 +61,13 @@ def whisper_cli_path() -> str | None:
 
 def describe_backend(spec: BackendSpec, hardware: HardwareInfo) -> BackendStatus:
     if not spec.implemented:
-        return BackendStatus(False, spec.dependency_present(), platform_matches(spec, hardware), False, "not implemented")
+        return BackendStatus(
+            False,
+            spec.dependency_present(),
+            platform_matches(spec, hardware),
+            False,
+            "not implemented",
+        )
     platform_ok = platform_matches(spec, hardware)
     if not platform_ok:
         if spec.name == "mlx-whisper":
@@ -81,7 +85,10 @@ def _extra_runtime(spec: BackendSpec) -> bool:
     if spec.name in {"vulkan", "whisper.cpp"}:
         return whisper_cli_path() is not None
     if spec.name == "macos":
-        return shutil.which("meetscribe-system-audio") is not None or shutil.which("swiftc") is not None
+        return (
+            shutil.which("meetscribe-system-audio") is not None
+            or shutil.which("swiftc") is not None
+        )
     return False
 
 
@@ -99,7 +106,9 @@ def _is_usable(spec: BackendSpec, hardware: HardwareInfo, dependency: bool) -> b
     if spec.name == "windows":
         return module_available("pyaudiowpatch")
     if spec.name == "macos":
-        return module_available("sounddevice") and shutil.which("meetscribe-system-audio") is not None
+        return (
+            module_available("sounddevice") and shutil.which("meetscribe-system-audio") is not None
+        )
     if spec.module is None:
         return True
     return dependency
@@ -121,7 +130,9 @@ def _runtime_reason(spec: BackendSpec, hardware: HardwareInfo) -> str:
         if binary:
             return f"whisper-cli at {binary}; Vulkan ICD not detected, binary may be CPU-only"
         if binding and vulkan:
-            return "pywhispercpp importable; Vulkan ICD present (GPU only if built with GGML_VULKAN=1)"
+            return (
+                "pywhispercpp importable; Vulkan ICD present (GPU only if built with GGML_VULKAN=1)"
+            )
         if binding:
             return "pywhispercpp importable; no Vulkan ICD, the stock wheel runs on CPU"
         return "build whisper.cpp with -DGGML_VULKAN=1 or uv sync --extra vulkan"
@@ -132,7 +143,9 @@ def _runtime_reason(spec: BackendSpec, hardware: HardwareInfo) -> str:
         if any(device.upper().startswith("GPU") for device in devices):
             return "OpenVINO devices: " + ", ".join(devices)
         if devices:
-            return "OpenVINO devices: " + ", ".join(devices) + " (no GPU listed, CPU fallback works)"
+            return (
+                "OpenVINO devices: " + ", ".join(devices) + " (no GPU listed, CPU fallback works)"
+            )
         return "openvino-genai importable"
     if spec.name == "pyannote":
         if not module_available("pyannote.audio"):

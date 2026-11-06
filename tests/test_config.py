@@ -1,8 +1,7 @@
+import platform
 from pathlib import Path
 
 import pytest
-
-import platform
 
 from meetscribe.config import (
     apply_overrides,
@@ -153,7 +152,8 @@ def test_provider_defaults_by_platform() -> None:
 
 
 def test_provider_override_keeps_explicit_url_and_model() -> None:
-    switched = apply_overrides(load_config(environ={}, home=Path("/tmp/meetscribe-empty-home")), {"llm_provider": "omlx"})
+    base = load_config(environ={}, home=Path("/tmp/meetscribe-empty-home"))
+    switched = apply_overrides(base, {"llm_provider": "omlx"})
     assert switched.llm.provider == "omlx"
     assert switched.llm.base_url == "http://127.0.0.1:8000/v1"
     assert switched.llm.model == "gemma-4-12B-it-4bit"

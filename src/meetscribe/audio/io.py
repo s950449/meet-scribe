@@ -67,7 +67,7 @@ def resample_linear(samples: np.ndarray, origin_rate: int, target_rate: int) -> 
     if mono.size == 0 or origin_rate == target_rate:
         return mono
     duration = mono.size / origin_rate
-    target_count = max(1, int(round(duration * target_rate)))
+    target_count = max(1, round(duration * target_rate))
     origin_x = np.linspace(0.0, 1.0, num=mono.size, endpoint=False)
     target_x = np.linspace(0.0, 1.0, num=target_count, endpoint=False)
     return np.interp(target_x, origin_x, mono).astype(np.float32)

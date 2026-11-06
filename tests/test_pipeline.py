@@ -45,7 +45,14 @@ class FakeAsr:
 class FakeSummarizer:
     name = "fake-summary"
 
-    def summarize(self, utterances, *, title: str, speaker_map: dict[str, str], on_event=None) -> MeetingSummary:
+    def summarize(
+        self,
+        utterances,
+        *,
+        title: str,
+        speaker_map: dict[str, str],
+        on_event=None,
+    ) -> MeetingSummary:
         del utterances, on_event
         owner = speaker_map.get("Me", "Me")
         return MeetingSummary(

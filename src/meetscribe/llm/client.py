@@ -63,25 +63,22 @@ class OpenAIChatClient:
             max_retries=0,
         )
         try:
-            request: dict[str, object] = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "top_p": self.top_p,
-                "messages": [
+            response = client.chat.completions.create(
+                model=self.model,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                presence_penalty=self.presence_penalty,
+                messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-            }
-            if self.presence_penalty is not None:
-                request["presence_penalty"] = self.presence_penalty
-            extra: dict[str, object] = {
-                "top_k": self.top_k,
-                "min_p": self.min_p,
-                # oMLX and llama-server both honor this nested flag.
-                "chat_template_kwargs": {"enable_thinking": False},
-            }
-            request["extra_body"] = extra
-            response = client.chat.completions.create(**request)
+                extra_body={
+                    "top_k": self.top_k,
+                    "min_p": self.min_p,
+                    # oMLX and llama-server both honor this nested flag.
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
+            )
         except Exception as exc:
             raise LlmError(f"LLM request to {self.base_url} failed: {exc}") from exc
         if not response.choices:

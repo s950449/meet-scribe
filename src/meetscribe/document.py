@@ -126,18 +126,24 @@ def _utterance(data: dict[str, object]) -> AttributedUtterance:
             words.append(
                 WordTimestamp(
                     text=str(word.get("text") or ""),
-                    start=float(word.get("start") or 0),
-                    end=float(word.get("end") or 0),
+                    start=_json_float(word.get("start")),
+                    end=_json_float(word.get("end")),
                 )
             )
     polished = data.get("polished_text")
     return AttributedUtterance(
         speaker_id=str(data.get("speaker_id") or "UNKNOWN"),
         text=str(data.get("text") or ""),
-        start=float(data.get("start") or 0),
-        end=float(data.get("end") or 0),
+        start=_json_float(data.get("start")),
+        end=_json_float(data.get("end")),
         track_id=str(data.get("track_id") or "mic"),
         overlap=bool(data.get("overlap") or False),
         polished_text=str(polished) if isinstance(polished, str) else None,
         words=tuple(words),
     )
+
+
+def _json_float(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return 0.0
+    return float(value)

@@ -57,7 +57,7 @@ class SyncedWavSession:
                 self._t0 = host_time
             origin = self._t0
             stats = self._stats.setdefault(track_id, TrackStats())
-            target = int(round((host_time - origin) * self.sample_rate))
+            target = round((host_time - origin) * self.sample_rate)
             if target < 0:
                 target = 0
             if target > stats.frames:
@@ -82,10 +82,7 @@ class SyncedWavSession:
     def finish(self, started_at: datetime) -> CaptureResult:
         with self._lock:
             self._flush_pending_locked()
-            if self._stats:
-                target = max(stats.frames for stats in self._stats.values())
-            else:
-                target = 0
+            target = max(stats.frames for stats in self._stats.values()) if self._stats else 0
             for track_id, stats in list(self._stats.items()):
                 if stats.frames < target:
                     gap = target - stats.frames
@@ -114,7 +111,10 @@ class SyncedWavSession:
 
     def stats(self) -> dict[str, TrackStats]:
         with self._lock:
-            return {key: TrackStats(value.frames, value.silence_frames, value.dropped_frames) for key, value in self._stats.items()}
+            return {
+                key: TrackStats(value.frames, value.silence_frames, value.dropped_frames)
+                for key, value in self._stats.items()
+            }
 
     def _emit_locked(
         self,
@@ -165,7 +165,8 @@ class SyncedWavSession:
         if handle is None:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             path = self.output_dir / f"{track_id}.wav"
-            handle = wave.open(str(path), "wb")
+            # Kept open until finish(); a context manager would close it immediately.
+            handle = wave.open(str(path), "wb")  # noqa: SIM115
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(self.sample_rate)

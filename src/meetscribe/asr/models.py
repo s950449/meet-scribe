@@ -94,7 +94,11 @@ def resolve_ggml_file(model: str, fallback_model: str, model_dir: Path) -> tuple
     raise ModelMissing(_ggml_missing(model_dir, wanted, model_dir / GGML_FILES[TURBO]))
 
 
-def resolve_openvino_dir(model: str, fallback_model: str, model_dir: Path) -> tuple[Path, str | None]:
+def resolve_openvino_dir(
+    model: str,
+    fallback_model: str,
+    model_dir: Path,
+) -> tuple[Path, str | None]:
     """Return an OpenVINO IR directory exported by optimum-cli."""
 
     selected = model.strip() or fallback_model.strip()

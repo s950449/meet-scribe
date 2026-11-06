@@ -61,8 +61,10 @@ class StdioSink:
     ) -> None:
         self.json_events = json_events
         self.json_stream = json_stream if json_stream is not None else sys.stdout
-        self.human_stream = human_stream if human_stream is not None else (
-            sys.stderr if json_events else sys.stdout
+        self.human_stream = (
+            human_stream
+            if human_stream is not None
+            else (sys.stderr if json_events else sys.stdout)
         )
 
     def emit(self, event: ProgressEvent) -> None:

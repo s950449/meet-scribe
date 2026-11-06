@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -55,7 +57,7 @@ class WindowsCapture:
 
     def record(
         self,
-        output_dir,
+        output_dir: Path,
         *,
         duration_s: float | None = None,
         on_event: Callable[[ProgressEvent], None] | None = None,
@@ -109,7 +111,9 @@ def list_wasapi_devices() -> tuple[list[AudioDevice], str, str]:
                     name=name,
                     kind=kind,
                     sample_rate=int(info.get("defaultSampleRate") or 0) or None,
-                    channels=int(info.get("maxInputChannels") or info.get("maxOutputChannels") or 0) or None,
+                    channels=int(info.get("maxInputChannels") or 0)
+                    or int(info.get("maxOutputChannels") or 0)
+                    or None,
                 )
             )
             if index == input_index:
@@ -133,7 +137,7 @@ def list_wasapi_devices() -> tuple[list[AudioDevice], str, str]:
         audio.terminate()
 
 
-def _pyaudio():
+def _pyaudio() -> Any:
     try:
         import pyaudiowpatch as pyaudio
     except ImportError as exc:
@@ -143,7 +147,12 @@ def _pyaudio():
     return pyaudio.PyAudio()
 
 
-def _open_wasapi(device: AudioDevice, track_id: str, session: SyncedWavSession, sample_rate: int):
+def _open_wasapi(
+    device: AudioDevice,
+    track_id: str,
+    session: SyncedWavSession,
+    sample_rate: int,
+) -> object:
     try:
         import pyaudiowpatch as pyaudio
     except ImportError as exc:
@@ -156,7 +165,12 @@ def _open_wasapi(device: AudioDevice, track_id: str, session: SyncedWavSession, 
 
     class _Stream:
         def __init__(self) -> None:
-            def callback(in_data, frame_count, time_info, status):
+            def callback(
+                in_data: bytes,
+                frame_count: int,
+                time_info: Any,
+                status: Any,
+            ) -> tuple[None, int]:
                 del time_info, status
                 pcm = np.frombuffer(in_data, dtype="<i2")
                 if channels > 1:

@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
 from meetscribe import __version__
-from meetscribe.config import load_config, parse_speaker_map
+from meetscribe.audio.devices import parse_pactl_short
+from meetscribe.config import AppConfig, load_config, parse_speaker_map
 from meetscribe.errors import MeetscribeError
 from meetscribe.events import ProgressEvent, StdioSink
-from meetscribe.audio.devices import parse_pactl_short
 from meetscribe.hardware import detect_hardware, recommended_asr, recommended_capture
 from meetscribe.llm.profiles import select_active_llm
 from meetscribe.pipeline import record_audio, run_meeting, summarize_file
@@ -37,16 +38,24 @@ def _version_callback(value: bool) -> None:
 def main(
     ctx: typer.Context,
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--config", "-c", help="TOML config file. Secrets stay in the environment."),
     ] = None,
     json_events: Annotated[
         bool,
-        typer.Option("--json-events", help="Write JSONL progress events to stdout for a future GUI."),
+        typer.Option(
+            "--json-events",
+            help="Write JSONL progress events to stdout for a future GUI.",
+        ),
     ] = False,
     version: Annotated[
-        Optional[bool],
-        typer.Option("--version", callback=_version_callback, is_eager=True, help="Print the version and exit."),
+        bool | None,
+        typer.Option(
+            "--version",
+            callback=_version_callback,
+            is_eager=True,
+            help="Print the version and exit.",
+        ),
     ] = None,
 ) -> None:
     """Local meeting capture, transcription, and summary."""
@@ -65,27 +74,34 @@ def record(
         typer.Option("--output-dir", "-o", help="Directory for mic.wav and system.wav."),
     ] = Path("recording"),
     duration: Annotated[
-        Optional[float],
+        float | None,
         typer.Option("--duration", "-d", help="Stop after this many seconds."),
     ] = None,
     backend: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--backend", help="Capture backend: auto, macos, windows, linux."),
     ] = None,
-    mic_device: Annotated[Optional[str], typer.Option("--mic-device", help="Microphone name or index.")] = None,
+    mic_device: Annotated[
+        str | None, typer.Option("--mic-device", help="Microphone name or index.")
+    ] = None,
     system_device: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--system-device", help="Monitor source or WASAPI loopback name."),
     ] = None,
     live: Annotated[
         bool,
-        typer.Option("--live", help="Transcribe chunks while recording. The final note still uses the full files."),
+        typer.Option(
+            "--live",
+            help="Transcribe chunks while recording. The final note still uses the full files.",
+        ),
     ] = False,
     chunk_seconds: Annotated[
-        Optional[float],
+        float | None,
         typer.Option("--chunk-seconds", help="Live transcription chunk length. Default 5."),
     ] = None,
-    list_devices: Annotated[bool, typer.Option("--list-devices", help="Print capture devices and exit.")] = False,
+    list_devices: Annotated[
+        bool, typer.Option("--list-devices", help="Print capture devices and exit.")
+    ] = False,
 ) -> None:
     """Record microphone and system audio onto one timebase. Ctrl+C stops."""
 
@@ -111,36 +127,54 @@ def transcribe(
     ctx: typer.Context,
     source: Annotated[Path, typer.Argument(help="Mic audio file, or a directory with mic.wav.")],
     system: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--system", help="System-audio recording that starts with the mic file."),
     ] = None,
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Markdown path. A JSON sidecar is written beside it."),
     ] = None,
-    title: Annotated[Optional[str], typer.Option("--title", help="Meeting title.")] = None,
-    asr_backend: Annotated[Optional[str], typer.Option("--asr-backend", help="ASR backend name or auto.")] = None,
-    asr_model: Annotated[Optional[str], typer.Option("--asr-model", help="ASR checkpoint id.")] = None,
+    title: Annotated[str | None, typer.Option("--title", help="Meeting title.")] = None,
+    asr_backend: Annotated[
+        str | None, typer.Option("--asr-backend", help="ASR backend name or auto.")
+    ] = None,
+    asr_model: Annotated[str | None, typer.Option("--asr-model", help="ASR checkpoint id.")] = None,
     diarization: Annotated[
-        Optional[str],
-        typer.Option("--diarization", help="Diarization backend: auto, track, single-speaker, pyannote, sherpa-onnx."),
+        str | None,
+        typer.Option(
+            "--diarization",
+            help="Diarization backend: auto, track, single-speaker, pyannote, sherpa-onnx.",
+        ),
     ] = None,
-    language: Annotated[Optional[str], typer.Option("--language", help="Whisper language code. Default zh.")] = None,
+    language: Annotated[
+        str | None, typer.Option("--language", help="Whisper language code. Default zh.")
+    ] = None,
     speaker: Annotated[
-        Optional[list[str]],
-        typer.Option("--speaker", "-s", help="Map a speaker id to a name, e.g. Me=林可安. Repeatable."),
+        list[str] | None,
+        typer.Option(
+            "--speaker", "-s", help="Map a speaker id to a name, e.g. Me=林可安. Repeatable."
+        ),
     ] = None,
-    base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
+    base_url: Annotated[
+        str | None, typer.Option("--base-url", help="OpenAI-compatible API base URL.")
+    ] = None,
     llm_provider: Annotated[
-        Optional[str],
-        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+        str | None,
+        typer.Option(
+            "--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."
+        ),
     ] = None,
     llm_model: Annotated[
-        Optional[str],
-        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+        str | None,
+        typer.Option(
+            "--llm-model",
+            help="Model alias. Overrides /v1/models and selects the sampling profile.",
+        ),
     ] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish", help="Keep the raw ASR text.")] = False,
-    keep_audio: Annotated[bool, typer.Option("--keep-audio", help="Keep the 16 kHz wavs next to the note.")] = False,
+    keep_audio: Annotated[
+        bool, typer.Option("--keep-audio", help="Keep the 16 kHz wavs next to the note.")
+    ] = False,
 ) -> None:
     """Transcribe audio, assign speakers, and optionally polish. Does not summarize."""
 
@@ -185,21 +219,28 @@ def summarize(
     ctx: typer.Context,
     source: Annotated[Path, typer.Argument(help="Meeting JSON written by transcribe or run.")],
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Markdown path. Defaults to the JSON stem."),
     ] = None,
     speaker: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option("--speaker", "-s", help="Map a speaker id to a name. Repeatable."),
     ] = None,
-    base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
+    base_url: Annotated[
+        str | None, typer.Option("--base-url", help="OpenAI-compatible API base URL.")
+    ] = None,
     llm_provider: Annotated[
-        Optional[str],
-        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+        str | None,
+        typer.Option(
+            "--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."
+        ),
     ] = None,
     llm_model: Annotated[
-        Optional[str],
-        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+        str | None,
+        typer.Option(
+            "--llm-model",
+            help="Model alias. Overrides /v1/models and selects the sampling profile.",
+        ),
     ] = None,
 ) -> None:
     """Summarize a transcript JSON file and rewrite the Markdown note."""
@@ -221,38 +262,47 @@ def summarize(
 def run(
     ctx: typer.Context,
     source: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Argument(help="Mic audio, or a session directory. Omit to record first."),
     ] = None,
-    system: Annotated[Optional[Path], typer.Option("--system", help="System-audio file.")] = None,
-    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Markdown path.")] = None,
+    system: Annotated[Path | None, typer.Option("--system", help="System-audio file.")] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Markdown path.")] = None,
     output_dir: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output-dir", help="Recording directory, used when no audio file is given."),
     ] = None,
-    title: Annotated[Optional[str], typer.Option("--title", help="Meeting title.")] = None,
-    duration: Annotated[Optional[float], typer.Option("--duration", "-d", help="Recording length in seconds.")] = None,
-    asr_backend: Annotated[Optional[str], typer.Option("--asr-backend")] = None,
-    asr_model: Annotated[Optional[str], typer.Option("--asr-model")] = None,
-    diarization: Annotated[Optional[str], typer.Option("--diarization")] = None,
-    language: Annotated[Optional[str], typer.Option("--language")] = None,
-    speaker: Annotated[Optional[list[str]], typer.Option("--speaker", "-s")] = None,
-    capture_backend: Annotated[Optional[str], typer.Option("--capture-backend")] = None,
-    base_url: Annotated[Optional[str], typer.Option("--base-url")] = None,
+    title: Annotated[str | None, typer.Option("--title", help="Meeting title.")] = None,
+    duration: Annotated[
+        float | None, typer.Option("--duration", "-d", help="Recording length in seconds.")
+    ] = None,
+    asr_backend: Annotated[str | None, typer.Option("--asr-backend")] = None,
+    asr_model: Annotated[str | None, typer.Option("--asr-model")] = None,
+    diarization: Annotated[str | None, typer.Option("--diarization")] = None,
+    language: Annotated[str | None, typer.Option("--language")] = None,
+    speaker: Annotated[list[str] | None, typer.Option("--speaker", "-s")] = None,
+    capture_backend: Annotated[str | None, typer.Option("--capture-backend")] = None,
+    base_url: Annotated[str | None, typer.Option("--base-url")] = None,
     llm_provider: Annotated[
-        Optional[str],
-        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+        str | None,
+        typer.Option(
+            "--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."
+        ),
     ] = None,
     llm_model: Annotated[
-        Optional[str],
-        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+        str | None,
+        typer.Option(
+            "--llm-model",
+            help="Model alias. Overrides /v1/models and selects the sampling profile.",
+        ),
     ] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish")] = False,
     keep_audio: Annotated[bool, typer.Option("--keep-audio")] = False,
-    live: Annotated[bool, typer.Option("--live", help="Stream chunk transcripts while recording.")] = False,
-    mic_device: Annotated[Optional[str], typer.Option("--mic-device")] = None,
-    system_device: Annotated[Optional[str], typer.Option("--system-device")] = None,
-    chunk_seconds: Annotated[Optional[float], typer.Option("--chunk-seconds")] = None,
+    live: Annotated[
+        bool, typer.Option("--live", help="Stream chunk transcripts while recording.")
+    ] = False,
+    mic_device: Annotated[str | None, typer.Option("--mic-device")] = None,
+    system_device: Annotated[str | None, typer.Option("--system-device")] = None,
+    chunk_seconds: Annotated[float | None, typer.Option("--chunk-seconds")] = None,
 ) -> None:
     """Record or load audio, then transcribe, polish, and summarize."""
 
@@ -304,12 +354,17 @@ def devices() -> None:
 def backends(
     ctx: typer.Context,
     llm_provider: Annotated[
-        Optional[str],
-        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+        str | None,
+        typer.Option(
+            "--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."
+        ),
     ] = None,
     llm_model: Annotated[
-        Optional[str],
-        typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
+        str | None,
+        typer.Option(
+            "--llm-model",
+            help="Model alias. Overrides /v1/models and selects the sampling profile.",
+        ),
     ] = None,
 ) -> None:
     """List backends and the hardware defaults for this machine."""
@@ -369,12 +424,12 @@ def backends(
     typer.echo(_format_backends(payload))
 
 
-def _config(ctx: typer.Context, **overrides: object):
+def _config(ctx: typer.Context, **overrides: object) -> AppConfig:
     cleaned = {key: value for key, value in overrides.items() if value is not None}
     return load_config(ctx.obj.get("config_path"), overrides=cleaned)
 
 
-def _guard(ctx: typer.Context, action) -> None:
+def _guard(ctx: typer.Context, action: Callable[[StdioSink], None]) -> None:
     sink = StdioSink(json_events=bool(ctx.obj.get("json_events")))
     try:
         action(sink)
@@ -421,7 +476,9 @@ def _format_backends(payload: dict) -> str:
         state = "implemented" if spec["implemented"] else "stub"
         usable = "usable=yes" if spec["usable"] else "usable=no"
         extra = f"  extra={spec['extra']}" if spec["extra"] else ""
-        lines.append(f"  {spec['name']:<16} {state:<12} {usable:<12} device={spec['device']}{extra}")
+        lines.append(
+            f"  {spec['name']:<16} {state:<12} {usable:<12} device={spec['device']}{extra}"
+        )
         lines.append(f"    {spec['description']}")
         lines.append(f"    {spec['reason']}")
     return "\n".join(lines)
@@ -437,7 +494,10 @@ def _device_report() -> str:
     if system == "Linux":
         pactl = shutil.which("pactl")
         if pactl is None:
-            lines.append("  pactl is not installed. Install PipeWire or PulseAudio, then uv sync --extra capture-linux.")
+            lines.append(
+                "  pactl is not installed. Install PipeWire or PulseAudio, "
+                "then uv sync --extra capture-linux."
+            )
             return "\n".join(lines)
         completed = subprocess.run(
             [pactl, "list", "short", "sources"],
@@ -472,9 +532,14 @@ def _device_report() -> str:
             lines.append(f"  {device.kind:<8} {device.id:>4}  {device.name}")
         return "\n".join(lines)
     if system == "Darwin":
-        lines.append("  System audio is ScreenCaptureKit via scripts/macos/SystemAudioCapture.swift.")
+        lines.append(
+            "  System audio is ScreenCaptureKit via scripts/macos/SystemAudioCapture.swift."
+        )
         lines.append("  Microphones are Core Audio inputs. uv sync --extra capture-macos")
-        lines.append("  swiftc -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift")
+        lines.append(
+            "  swiftc -parse-as-library -O -o ~/.local/bin/meetscribe-system-audio "
+            "scripts/macos/SystemAudioCapture.swift"
+        )
         return "\n".join(lines)
     lines.append("  No capture backend for this operating system. Transcribe existing wav files.")
     return "\n".join(lines)

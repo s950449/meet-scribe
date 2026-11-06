@@ -19,10 +19,7 @@ def _write_pcm(
     count = int(rate * seconds)
     time = np.arange(count) / rate
     mono = 0.25 * np.sin(2 * np.pi * 440 * time)
-    if channels == 1:
-        samples = mono
-    else:
-        samples = np.column_stack([mono, mono * 0.5]).reshape(-1)
+    samples = mono if channels == 1 else np.column_stack([mono, mono * 0.5]).reshape(-1)
     if sample_width == 2:
         pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2")
         raw = pcm.tobytes()

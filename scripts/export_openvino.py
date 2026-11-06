@@ -9,7 +9,8 @@ turbo IR exists and the Breeze IR does not.
 
     uv sync --extra openvino
     uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py --convert
-    uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py --model openai/whisper-large-v3-turbo --convert
+    uv run --with "optimum-intel[openvino]" python scripts/export_openvino.py \
+        --model openai/whisper-large-v3-turbo --convert
 
 GPU inference then uses:
 
@@ -26,7 +27,10 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--model", default="MediaTek-Research/Breeze-ASR-25")
     parser.add_argument("--output", default="")
     parser.add_argument("--convert", action="store_true")
@@ -38,7 +42,11 @@ def main() -> int:
         return 0
     cli = shutil.which("optimum-cli")
     if cli is None:
-        print("optimum-cli is not on PATH. uv run --with 'optimum-intel[openvino]' python scripts/export_openvino.py --convert", file=sys.stderr)
+        print(
+            "optimum-cli is not on PATH. "
+            "uv run --with 'optimum-intel[openvino]' python scripts/export_openvino.py --convert",
+            file=sys.stderr,
+        )
         return 1
     output.mkdir(parents=True, exist_ok=True)
     command = [

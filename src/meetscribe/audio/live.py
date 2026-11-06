@@ -30,7 +30,11 @@ def make_live_callback(
         if state["failed"] or samples.size == 0:
             return
         try:
-            audio = resample_linear(np.asarray(samples, dtype=np.float32), sample_rate, TARGET_SAMPLE_RATE)
+            audio = resample_linear(
+                np.asarray(samples, dtype=np.float32),
+                sample_rate,
+                TARGET_SAMPLE_RATE,
+            )
             with tempfile.TemporaryDirectory(prefix="meetscribe-live-") as tmp:
                 path = Path(tmp) / "chunk.wav"
                 write_wav_mono(path, audio, TARGET_SAMPLE_RATE)

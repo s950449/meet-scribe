@@ -75,6 +75,7 @@ def choose_wasapi_devices(
     mics = [device for device in devices if device.kind == "mic"]
     loopbacks = [device for device in devices if device.kind == "loopback"]
     mic = _pick(mics, mic_device, default_input, "microphone")
+    system: AudioDevice | None
     if system_device:
         system = _pick(loopbacks, system_device, "", "WASAPI loopback")
     elif default_output:
@@ -82,7 +83,8 @@ def choose_wasapi_devices(
         system = named[0] if named else (loopbacks[0] if loopbacks else None)
         if system is None:
             raise AudioError(
-                "No WASAPI loopback device was found. Install PyAudioWPatch and check that an output device is active."
+                "No WASAPI loopback device was found. "
+                "Install PyAudioWPatch and check that an output device is active."
             )
     else:
         system = _pick(loopbacks, "", "", "WASAPI loopback")

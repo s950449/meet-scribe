@@ -86,8 +86,4 @@ def coalesce(segments: list[TranscriptSegment], *, gap: float = 0.8) -> list[Tra
 
 def _cjk(char: str) -> bool:
     code = ord(char)
-    return (
-        0x3400 <= code <= 0x9FFF
-        or 0xF900 <= code <= 0xFAFF
-        or 0x3040 <= code <= 0x30FF
-    )
+    return 0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF or 0x3040 <= code <= 0x30FF

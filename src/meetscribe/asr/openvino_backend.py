@@ -66,7 +66,8 @@ class OpenVINOWhisperAsr:
         self._audio_loader = audio_loader
 
     def capabilities(self) -> AsrCapabilities:
-        device = "openvino-gpu" if self.requested_device.strip().upper() in {"", "AUTO", "GPU"} else "cpu"
+        requested = self.requested_device.strip().upper()
+        device = "openvino-gpu" if requested in {"", "AUTO", "GPU"} else "cpu"
         return AsrCapabilities(streaming=False, word_timestamps=True, device=device)
 
     def transcribe(
@@ -88,7 +89,13 @@ class OpenVINOWhisperAsr:
         if device_warning and on_event is not None:
             on_event(log_event("asr", device_warning, device=device))
         if on_event is not None:
-            on_event(log_event("asr", f"OpenVINO device {device}, model {ir_dir.name}", device=device))
+            on_event(
+                log_event(
+                    "asr",
+                    f"OpenVINO device {device}, model {ir_dir.name}",
+                    device=device,
+                )
+            )
         factory = self._pipeline_factory or _import_pipeline()
         pipeline = _construct_pipeline(factory, ir_dir, device)
         samples = (self._audio_loader or _load_16k)(audio)
@@ -134,7 +141,9 @@ def _generate(pipeline: object, samples: np.ndarray, language: str | None) -> ob
     }
     if language:
         kwargs["language"] = language
-    generate = pipeline.generate
+    generate = getattr(pipeline, "generate", None)
+    if not callable(generate):
+        raise BackendNotInstalled("openvino-genai WhisperPipeline has no generate()")
     attempts: list[tuple[object, dict[str, object]]] = [
         (speech, kwargs),
         (speech.tolist(), kwargs),

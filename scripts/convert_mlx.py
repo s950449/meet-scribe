@@ -32,12 +32,26 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--torch-name-or-path", default="MediaTek-Research/Breeze-ASR-25")
-    parser.add_argument("--mlx-path", default=str(Path.home() / ".cache/meetscribe/models/breeze-asr-25-mlx"))
-    parser.add_argument("--convert-script", default="", help="Path to mlx-examples whisper/convert.py")
+    parser.add_argument(
+        "--mlx-path",
+        default=str(Path.home() / ".cache/meetscribe/models/breeze-asr-25-mlx"),
+    )
+    parser.add_argument(
+        "--convert-script",
+        default="",
+        help="Path to mlx-examples whisper/convert.py",
+    )
     parser.add_argument("--dtype", default="float16")
-    parser.add_argument("--convert", action="store_true", help="Run the converter instead of printing instructions.")
+    parser.add_argument(
+        "--convert",
+        action="store_true",
+        help="Run the converter instead of printing instructions.",
+    )
     args = parser.parse_args()
     if not args.convert:
         print(__doc__)

@@ -9,13 +9,16 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
+from meetscribe.asr.base import AsrBackend
 from meetscribe.audio.base import normalize_tracks
 from meetscribe.audio.file_input import FileInput
 from meetscribe.config import AppConfig, language_hint
+from meetscribe.diarization.base import DiarizationBackend
 from meetscribe.document import dump_document, load_document
 from meetscribe.errors import AudioError
 from meetscribe.events import log_event, stage_event
@@ -28,14 +31,38 @@ from meetscribe.registry import Registry, build_registry
 from meetscribe.render.markdown import render_markdown
 from meetscribe.types import (
     AttributedUtterance,
+    AudioTrack,
     EventSink,
     MeetingDocument,
     MeetingSummary,
     ProgressEvent,
+    SpeakerTurn,
     TranscriptSegment,
 )
 
 PENDING_SUMMARY = "（尚未摘要。執行 meetscribe summarize 以產生摘要。）"
+
+
+class _Polisher(Protocol):
+    def polish(
+        self,
+        utterances: Sequence[AttributedUtterance],
+        *,
+        on_event: Callable[[ProgressEvent], None] | None = None,
+    ) -> tuple[AttributedUtterance, ...]:
+        """Rewrite utterances."""
+
+
+class _Summarizer(Protocol):
+    def summarize(
+        self,
+        utterances: Sequence[AttributedUtterance],
+        *,
+        title: str,
+        speaker_map: dict[str, str] | None = None,
+        on_event: Callable[[ProgressEvent], None] | None = None,
+    ) -> MeetingSummary:
+        """Write a meeting summary."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +112,12 @@ def record_audio(
         asr = reg.create("asr", asr_name, config)
         sample_rate = int(getattr(capture, "sample_rate", config.capture.sample_rate))
         on_chunk = make_live_callback(asr, language_hint(config.asr.language), events, sample_rate)
-        events.emit(log_event("live", f"Live transcription with {asr_name} every {config.capture.chunk_seconds:g}s"))
+        events.emit(
+            log_event(
+                "live",
+                f"Live transcription with {asr_name} every {config.capture.chunk_seconds:g}s",
+            )
+        )
     capture.record(  # type: ignore[attr-defined]
         output_dir,
         duration_s=duration_s,
@@ -106,10 +138,10 @@ def run_meeting(
     sink: EventSink | None = None,
     registry: Registry | None = None,
     hardware: HardwareInfo | None = None,
-    asr: object | None = None,
-    diarizer: object | None = None,
-    polisher: object | None = None,
-    summarizer: object | None = None,
+    asr: AsrBackend | None = None,
+    diarizer: DiarizationBackend | None = None,
+    polisher: _Polisher | None = None,
+    summarizer: _Summarizer | None = None,
     do_polish: bool = True,
     do_summary: bool = True,
     keep_audio: bool = False,
@@ -197,7 +229,8 @@ def summarize_file(
         events.emit(
             log_event(
                 "summarize",
-                "Writing an extractive summary without calling the LLM endpoint " f"at {config.llm.base_url}.",
+                "Writing an extractive summary without calling the LLM endpoint "
+                f"at {config.llm.base_url}.",
             )
         )
     document.summary = chosen.summarize(  # type: ignore[attr-defined]
@@ -211,10 +244,17 @@ def summarize_file(
     return _write(document, destination, events)
 
 
-def _transcribe(config, tracks, events, registry, hardware, asr) -> list[TranscriptSegment]:
+def _transcribe(
+    config: AppConfig,
+    tracks: Sequence[AudioTrack],
+    events: EventSink,
+    registry: Registry,
+    hardware: HardwareInfo,
+    asr: AsrBackend | None,
+) -> list[TranscriptSegment]:
     if asr is None:
         name = registry.resolve_asr(config.asr.backend, hardware)
-        asr = registry.create("asr", name, config)
+        asr = _checked(registry.create("asr", name, config), "transcribe")
         events.emit(log_event("asr", f"ASR backend: {name}", backend=name, model=config.asr.model))
     else:
         events.emit(log_event("asr", f"ASR backend: {getattr(asr, 'name', 'custom')}"))
@@ -248,12 +288,18 @@ def _transcribe(config, tracks, events, registry, hardware, asr) -> list[Transcr
     return segments
 
 
-def _diarize(config, tracks, events, registry, diarizer):
+def _diarize(
+    config: AppConfig,
+    tracks: Sequence[AudioTrack],
+    events: EventSink,
+    registry: Registry,
+    diarizer: DiarizationBackend | None,
+) -> list[SpeakerTurn]:
     if diarizer is None:
         name = config.diarization.backend
         if name == "auto":
             name = recommended_diarization(len(tracks))
-        diarizer = registry.create("diarization", name, config)
+        diarizer = _checked(registry.create("diarization", name, config), "diarize")
     else:
         name = getattr(diarizer, "name", "custom")
     events.emit(stage_event("diarize", "start", message=f"Diarizing with {name}", backend=name))
@@ -269,11 +315,19 @@ def _diarize(config, tracks, events, registry, diarizer):
     return turns
 
 
-def _polish(config, utterances, events, polisher, do_polish, environ) -> tuple[AttributedUtterance, ...]:
+def _polish(
+    config: AppConfig,
+    utterances: Sequence[AttributedUtterance],
+    events: EventSink,
+    polisher: _Polisher | None,
+    do_polish: bool,
+    environ: Mapping[str, str] | None,
+) -> tuple[AttributedUtterance, ...]:
+    chosen: _Polisher
     if not do_polish:
         chosen = IdentityPolisher(reason="Polishing skipped")
     else:
-        chosen = polisher or build_polisher(config, environ)
+        chosen = polisher if polisher is not None else build_polisher(config, environ)
     if isinstance(chosen, IdentityPolisher):
         events.emit(stage_event("polish", "skip", message=chosen.reason))
     else:
@@ -290,7 +344,15 @@ def _polish(config, utterances, events, polisher, do_polish, environ) -> tuple[A
     return tuple(polished)
 
 
-def _summarize(config, utterances, events, summarizer, do_summary, title, environ) -> MeetingSummary:
+def _summarize(
+    config: AppConfig,
+    utterances: Sequence[AttributedUtterance],
+    events: EventSink,
+    summarizer: _Summarizer | None,
+    do_summary: bool,
+    title: str,
+    environ: Mapping[str, str] | None,
+) -> MeetingSummary:
     if not do_summary:
         events.emit(stage_event("summarize", "skip", message="Summary skipped"))
         return MeetingSummary(overview=PENDING_SUMMARY)
@@ -307,12 +369,25 @@ def _summarize(config, utterances, events, summarizer, do_summary, title, enviro
             stage_event(
                 "summarize",
                 "start",
-                message=f"Summarizing with {_active_model(chosen, config)} at {config.llm.base_url}",
+                message=(
+                    f"Summarizing with {_active_model(chosen, config)} at {config.llm.base_url}"
+                ),
             )
         )
-    summary = chosen.summarize(utterances, title=title, speaker_map=dict(config.speaker_map), on_event=events.emit)
+    summary = chosen.summarize(
+        utterances,
+        title=title,
+        speaker_map=dict(config.speaker_map),
+        on_event=events.emit,
+    )
     events.emit(stage_event("summarize", "done", message="Summary ready"))
     return summary
+
+
+def _checked(value: object, method: str) -> Any:
+    if not callable(getattr(value, method, None)):
+        raise TypeError(f"Backend is missing {method}()")
+    return value
 
 
 def _active_model(chosen: object, config: AppConfig) -> str:

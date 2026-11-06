@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from meetscribe.audio.devices import AudioDevice, choose_linux_devices, parse_pactl_short
 from meetscribe.audio.record import StreamOpener, run_synced_recording
@@ -55,7 +57,7 @@ class LinuxCapture:
 
     def record(
         self,
-        output_dir,
+        output_dir: Path,
         *,
         duration_s: float | None = None,
         on_event: Callable[[ProgressEvent], None] | None = None,
@@ -119,7 +121,12 @@ def _sources_from_sounddevice() -> list[AudioDevice]:
     return devices
 
 
-def _open_sounddevice(device: AudioDevice, track_id: str, session: SyncedWavSession, sample_rate: int):
+def _open_sounddevice(
+    device: AudioDevice,
+    track_id: str,
+    session: SyncedWavSession,
+    sample_rate: int,
+) -> object:
     try:
         import sounddevice as sd
     except ImportError as exc:
@@ -130,7 +137,7 @@ def _open_sounddevice(device: AudioDevice, track_id: str, session: SyncedWavSess
 
     class _Stream:
         def __init__(self) -> None:
-            def callback(indata, frames, time_info, status):
+            def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
                 del time_info, status
                 samples = indata[:, 0].copy()
                 host = time.monotonic() - frames / sample_rate
@@ -155,7 +162,7 @@ def _open_sounddevice(device: AudioDevice, track_id: str, session: SyncedWavSess
     return _Stream()
 
 
-def _resolve_input(sd, device: AudioDevice):
+def _resolve_input(sd: Any, device: AudioDevice) -> str | int:
     query = device.name
     try:
         queried = sd.query_devices()

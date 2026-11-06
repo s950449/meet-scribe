@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import replace
+from typing import Any
 
 from meetscribe.diarization.simple import MIC_SPEAKER
 from meetscribe.errors import BackendNotInstalled, MeetscribeError
@@ -78,7 +79,7 @@ class PyannoteDiarizer:
             turns.extend(_turns_from_output(output, track.track_id))
         return _mark_overlaps(turns)
 
-    def _load_pipeline(self) -> object:
+    def _load_pipeline(self) -> Any:
         if self._pipeline_loader is not None:
             return self._pipeline_loader()
         try:
@@ -93,7 +94,8 @@ class PyannoteDiarizer:
             pipeline = Pipeline.from_pretrained(self.model, use_auth_token=self.hf_token)
         if pipeline is None:
             raise MeetscribeError(
-                f"Could not load {self.model}. Accept the Hugging Face conditions and check HF_TOKEN."
+                f"Could not load {self.model}. "
+                "Accept the Hugging Face conditions and check HF_TOKEN."
             )
         return pipeline
 
@@ -115,13 +117,15 @@ def _turns_from_output(output: object, track_id: str) -> list[SpeakerTurn]:
     return turns
 
 
-def _iter_annotation(annotation: object) -> Iterable[tuple[object, str]]:
+def _iter_annotation(annotation: Any) -> Iterable[tuple[Any, str]]:
     itertracks = getattr(annotation, "itertracks", None)
     if callable(itertracks):
         for turn, _track, speaker in itertracks(yield_label=True):
             yield turn, str(speaker)
         return
-    for item in annotation:  # type: ignore[operator]
+    if not isinstance(annotation, Iterable):
+        return
+    for item in annotation:
         if isinstance(item, tuple) and len(item) == 3:
             turn, _track, speaker = item
             yield turn, str(speaker)
@@ -135,7 +139,11 @@ def _mark_overlaps(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:
     for turn in turns:
         overlaps = False
         for other in turns:
-            if other is turn or other.track_id != turn.track_id or other.speaker_id == turn.speaker_id:
+            if (
+                other is turn
+                or other.track_id != turn.track_id
+                or other.speaker_id == turn.speaker_id
+            ):
                 continue
             if _overlap(turn.start, turn.end, other.start, other.end) > 0:
                 overlaps = True

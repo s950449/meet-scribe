@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from meetscribe.config import DEFAULT_LLM_MODEL, AppConfig, LlmSettings, SamplingProfile
+from meetscribe.errors import ConfigError
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,29 +162,58 @@ def match_profile(
 
 
 def apply_sampling_overrides(profile: SamplingProfile, settings: LlmSettings) -> SamplingProfile:
-    updates: dict[str, object] = {}
-    if settings.temperature is not None:
-        updates["temperature"] = settings.temperature
-    if settings.top_p is not None:
-        updates["top_p"] = settings.top_p
-    if settings.top_k is not None:
-        updates["top_k"] = settings.top_k
-    if settings.min_p is not None:
-        updates["min_p"] = settings.min_p
-    if settings.presence_penalty is not None:
-        updates["presence_penalty"] = settings.presence_penalty
-    if not updates:
+    if (
+        settings.temperature is None
+        and settings.top_p is None
+        and settings.top_k is None
+        and settings.min_p is None
+        and settings.presence_penalty is None
+    ):
         return profile
-    return replace(profile, **updates)
+    return replace(
+        profile,
+        temperature=profile.temperature if settings.temperature is None else settings.temperature,
+        top_p=profile.top_p if settings.top_p is None else settings.top_p,
+        top_k=profile.top_k if settings.top_k is None else settings.top_k,
+        min_p=profile.min_p if settings.min_p is None else settings.min_p,
+        presence_penalty=(
+            profile.presence_penalty
+            if settings.presence_penalty is None
+            else settings.presence_penalty
+        ),
+    )
 
 
-def profile_from_table(raw: Mapping[str, object], base: SamplingProfile | None = None) -> SamplingProfile:
+def profile_from_table(
+    raw: Mapping[str, object],
+    base: SamplingProfile | None = None,
+) -> SamplingProfile:
     current = base or SamplingProfile(temperature=1.0, top_p=0.95, top_k=64)
     presence = raw.get("presence_penalty", current.presence_penalty)
     return SamplingProfile(
-        temperature=float(raw["temperature"]) if "temperature" in raw else current.temperature,
-        top_p=float(raw["top_p"]) if "top_p" in raw else current.top_p,
-        top_k=int(raw["top_k"]) if "top_k" in raw else current.top_k,
-        min_p=float(raw["min_p"]) if "min_p" in raw else current.min_p,
-        presence_penalty=None if presence is None else float(presence),
+        temperature=_profile_float(raw, "temperature", current.temperature),
+        top_p=_profile_float(raw, "top_p", current.top_p),
+        top_k=_profile_int(raw, "top_k", current.top_k),
+        min_p=_profile_float(raw, "min_p", current.min_p),
+        presence_penalty=(
+            None if presence is None else _profile_number(presence, "presence_penalty")
+        ),
     )
+
+
+def _profile_float(raw: Mapping[str, object], key: str, default: float) -> float:
+    if key not in raw:
+        return default
+    return _profile_number(raw[key], key)
+
+
+def _profile_int(raw: Mapping[str, object], key: str, default: int) -> int:
+    if key not in raw:
+        return default
+    return int(_profile_number(raw[key], key))
+
+
+def _profile_number(value: object, key: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        raise ConfigError(f"[llm.profiles] {key} must be a number")
+    return float(value)

@@ -266,27 +266,37 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
     if "llm_base_url" in overrides and overrides["llm_base_url"] is not None:
         llm = replace(llm, base_url=str(overrides["llm_base_url"]), base_url_explicit=True)
     if "llm_model" in overrides and overrides["llm_model"] is not None:
-        llm = replace(llm, model=str(overrides["llm_model"]), model_locked=True, model_explicit=True)
+        llm = replace(
+            llm,
+            model=str(overrides["llm_model"]),
+            model_locked=True,
+            model_explicit=True,
+        )
     if "llm_polish" in overrides and overrides["llm_polish"] is not None:
         llm = replace(llm, polish=bool(overrides["llm_polish"]))
     if "context_tokens" in overrides and overrides["context_tokens"] is not None:
-        llm = replace(llm, context_tokens=int(overrides["context_tokens"]))
+        llm = replace(llm, context_tokens=_as_int(overrides["context_tokens"], "context_tokens"))
     if "reserve_tokens" in overrides and overrides["reserve_tokens"] is not None:
-        llm = replace(llm, reserve_tokens=int(overrides["reserve_tokens"]))
+        llm = replace(llm, reserve_tokens=_as_int(overrides["reserve_tokens"], "reserve_tokens"))
     if "temperature" in overrides and overrides["temperature"] is not None:
-        llm = replace(llm, temperature=float(overrides["temperature"]))
+        llm = replace(llm, temperature=_as_float(overrides["temperature"], "temperature"))
     if "top_p" in overrides and overrides["top_p"] is not None:
-        llm = replace(llm, top_p=float(overrides["top_p"]))
+        llm = replace(llm, top_p=_as_float(overrides["top_p"], "top_p"))
     if "top_k" in overrides and overrides["top_k"] is not None:
-        llm = replace(llm, top_k=int(overrides["top_k"]))
+        llm = replace(llm, top_k=_as_int(overrides["top_k"], "top_k"))
     if "min_p" in overrides and overrides["min_p"] is not None:
-        llm = replace(llm, min_p=float(overrides["min_p"]))
+        llm = replace(llm, min_p=_as_float(overrides["min_p"], "min_p"))
     if "presence_penalty" in overrides and overrides["presence_penalty"] is not None:
-        llm = replace(llm, presence_penalty=float(overrides["presence_penalty"]))
+        llm = replace(
+            llm,
+            presence_penalty=_as_float(overrides["presence_penalty"], "presence_penalty"),
+        )
     if "llm_base_url" in overrides and overrides.get("llm_base_url") is not None:
         llm = _align_provider_with_url(
             llm,
-            provider_explicit="llm_provider" in overrides and overrides.get("llm_provider") is not None,
+            provider_explicit=(
+                "llm_provider" in overrides and overrides.get("llm_provider") is not None
+            ),
             model_explicit=llm.model_explicit,
             fallback_explicit=False,
         )
@@ -297,9 +307,12 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
     if "system_device" in overrides and overrides["system_device"] is not None:
         capture = replace(capture, system_device=str(overrides["system_device"]))
     if "chunk_seconds" in overrides and overrides["chunk_seconds"] is not None:
-        capture = replace(capture, chunk_seconds=float(overrides["chunk_seconds"]))
+        capture = replace(
+            capture,
+            chunk_seconds=_as_float(overrides["chunk_seconds"], "chunk_seconds"),
+        )
     if "sample_rate" in overrides and overrides["sample_rate"] is not None:
-        capture = replace(capture, sample_rate=int(overrides["sample_rate"]))
+        capture = replace(capture, sample_rate=_as_int(overrides["sample_rate"], "sample_rate"))
     if "output_dir" in overrides and overrides["output_dir"] is not None:
         output_dir = Path(str(overrides["output_dir"])).expanduser()
     if "speaker_map" in overrides and overrides["speaker_map"] is not None:
@@ -411,19 +424,22 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
             raise ConfigError("[llm].polish must be a boolean")
         llm = replace(llm, polish=polish)
     if "context_tokens" in llm_table:
-        llm = replace(llm, context_tokens=int(llm_table["context_tokens"]))
+        llm = replace(llm, context_tokens=_as_int(llm_table["context_tokens"], "context_tokens"))
     if "reserve_tokens" in llm_table:
-        llm = replace(llm, reserve_tokens=int(llm_table["reserve_tokens"]))
+        llm = replace(llm, reserve_tokens=_as_int(llm_table["reserve_tokens"], "reserve_tokens"))
     if "temperature" in llm_table:
-        llm = replace(llm, temperature=float(llm_table["temperature"]))
+        llm = replace(llm, temperature=_as_float(llm_table["temperature"], "temperature"))
     if "top_p" in llm_table:
-        llm = replace(llm, top_p=float(llm_table["top_p"]))
+        llm = replace(llm, top_p=_as_float(llm_table["top_p"], "top_p"))
     if "top_k" in llm_table:
-        llm = replace(llm, top_k=int(llm_table["top_k"]))
+        llm = replace(llm, top_k=_as_int(llm_table["top_k"], "top_k"))
     if "min_p" in llm_table:
-        llm = replace(llm, min_p=float(llm_table["min_p"]))
+        llm = replace(llm, min_p=_as_float(llm_table["min_p"], "min_p"))
     if "presence_penalty" in llm_table:
-        llm = replace(llm, presence_penalty=float(llm_table["presence_penalty"]))
+        llm = replace(
+            llm,
+            presence_penalty=_as_float(llm_table["presence_penalty"], "presence_penalty"),
+        )
     profiles = _merge_profile_table(llm.profiles, _table(llm_table.get("profiles"), "llm.profiles"))
     llm = replace(llm, profiles=profiles)
     if "base_url" in llm_table and "provider" not in llm_table:
@@ -438,13 +454,19 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
     if "backend" in capture_table:
         capture = replace(capture, backend=str(capture_table["backend"]))
     if "sample_rate" in capture_table:
-        capture = replace(capture, sample_rate=int(capture_table["sample_rate"]))
+        capture = replace(
+            capture,
+            sample_rate=_as_int(capture_table["sample_rate"], "sample_rate"),
+        )
     if "mic_device" in capture_table:
         capture = replace(capture, mic_device=str(capture_table["mic_device"]))
     if "system_device" in capture_table:
         capture = replace(capture, system_device=str(capture_table["system_device"]))
     if "chunk_seconds" in capture_table:
-        capture = replace(capture, chunk_seconds=float(capture_table["chunk_seconds"]))
+        capture = replace(
+            capture,
+            chunk_seconds=_as_float(capture_table["chunk_seconds"], "chunk_seconds"),
+        )
 
     speakers = _table(data.get("speakers"), "speakers")
     for key, value in speakers.items():
@@ -523,15 +545,26 @@ def _apply_provider(
 ) -> LlmSettings:
     name = normalize_llm_provider(provider)
     base_url, model, fallback = provider_defaults(name)
-    updates: dict[str, object] = {"provider": name}
-    if not keep_base_url:
-        updates["base_url"] = base_url
-    if not keep_model:
-        updates["model"] = model
-        updates["model_explicit"] = False
-    if not keep_fallback:
-        updates["fallback_model"] = fallback
-    return replace(settings, **updates)
+    return replace(
+        settings,
+        provider=name,
+        base_url=settings.base_url if keep_base_url else base_url,
+        model=settings.model if keep_model else model,
+        model_explicit=settings.model_explicit if keep_model else False,
+        fallback_model=settings.fallback_model if keep_fallback else fallback,
+    )
+
+
+def _as_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        raise ConfigError(f"{field_name} must be a number")
+    return int(value)
+
+
+def _as_float(value: object, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        raise ConfigError(f"{field_name} must be a number")
+    return float(value)
 
 
 def _merge_profile_table(
@@ -569,6 +602,4 @@ def _reject_secrets(data: Mapping[str, object]) -> None:
                 "Set OPENAI_API_KEY or HF_TOKEN in the environment."
             )
     if SECRET_KEYS.intersection(data):
-        raise ConfigError(
-            "Do not put secrets in config.toml. Set them in the environment."
-        )
+        raise ConfigError("Do not put secrets in config.toml. Set them in the environment.")

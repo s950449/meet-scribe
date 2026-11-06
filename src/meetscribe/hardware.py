@@ -86,9 +86,7 @@ def detect_vulkan_loader() -> bool:
     if shutil.which("vulkaninfo"):
         return True
     icd = Path("/usr/share/vulkan/icd.d")
-    if icd.is_dir() and any(icd.glob("*.json")):
-        return True
-    return False
+    return bool(icd.is_dir() and any(icd.glob("*.json")))
 
 
 def detect_hardware() -> HardwareInfo:

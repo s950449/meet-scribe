@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 from meetscribe.asr.mlx_whisper import MlxWhisperAsr
-from meetscribe.asr.models import BREEZE, TURBO, resolve_ggml_file, resolve_mlx_repo, resolve_openvino_dir
+from meetscribe.asr.models import (
+    BREEZE,
+    TURBO,
+    resolve_ggml_file,
+    resolve_mlx_repo,
+    resolve_openvino_dir,
+)
 from meetscribe.asr.openvino_backend import OpenVINOWhisperAsr, select_openvino_device
 from meetscribe.asr.vulkan import VulkanWhisperAsr, parse_whisper_cpp_json
 from meetscribe.audio.devices import (
@@ -117,8 +123,9 @@ def test_openvino_device_selection_and_fake_pipeline(tmp_path: Path) -> None:
             self.text = text
 
     class Result:
-        chunks = [Chunk(0.0, 1.5, " 你好 API")]
-        texts = ["你好 API"]
+        def __init__(self) -> None:
+            self.chunks = [Chunk(0.0, 1.5, " 你好 API")]
+            self.texts = ["你好 API"]
 
     seen: dict[str, object] = {}
 
@@ -212,7 +219,10 @@ def test_synced_session_corrects_drift_and_chunks(tmp_path: Path) -> None:
 
 
 def test_linux_device_choice_and_fake_record(tmp_path: Path) -> None:
-    text = "0\talsa_output.pci.analog-stereo.monitor\tmodule\n1\talsa_input.pci.analog-stereo\tmodule\n"
+    text = (
+        "0\talsa_output.pci.analog-stereo.monitor\tmodule\n"
+        "1\talsa_input.pci.analog-stereo\tmodule\n"
+    )
     sources = parse_pactl_short(text)
     mic, system = choose_linux_devices(sources)
     assert mic.kind == "mic"
@@ -266,7 +276,7 @@ def test_pyannote_keeps_mic_and_splits_system(tmp_path: Path) -> None:
     class Output:
         speaker_diarization = Annotation()
 
-    diarizer = PyannoteDiarizer(hf_token=None, pipeline_loader=lambda: (lambda path: Output()))
+    diarizer = PyannoteDiarizer(hf_token=None, pipeline_loader=lambda: lambda path: Output())
     tracks = [
         AudioTrack("mic", tmp_path / "mic.wav", 16000, 1, 3.0),
         AudioTrack("system", tmp_path / "system.wav", 16000, 1, 3.0),
@@ -283,7 +293,14 @@ def test_pyannote_keeps_mic_and_splits_system(tmp_path: Path) -> None:
 
 def test_live_callback_offsets_segments(tmp_path: Path) -> None:
     class FakeAsr:
-        def transcribe(self, audio: Path, *, track_id: str, language: str | None = None, on_event=None):
+        def transcribe(
+            self,
+            audio: Path,
+            *,
+            track_id: str,
+            language: str | None = None,
+            on_event=None,
+        ):
             del audio, language, on_event
             return [TranscriptSegment("你好", 0.2, 0.8, track_id)]
 

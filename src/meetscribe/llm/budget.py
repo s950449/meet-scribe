@@ -22,11 +22,7 @@ def estimate_tokens(text: str) -> int:
     other = 0
     for char in text:
         code = ord(char)
-        if (
-            0x3400 <= code <= 0x9FFF
-            or 0xF900 <= code <= 0xFAFF
-            or 0x3040 <= code <= 0x30FF
-        ):
+        if 0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF or 0x3040 <= code <= 0x30FF:
             cjk += 1
         else:
             other += 1

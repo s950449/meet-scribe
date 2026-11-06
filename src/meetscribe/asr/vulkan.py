@@ -61,14 +61,24 @@ class VulkanWhisperAsr:
         from meetscribe.asr.models import default_model_dir
 
         model_dir = self.model_dir or default_model_dir()
-        model_path, warning = resolve_ggml_file(self.requested_model, self.fallback_model, model_dir)
+        model_path, warning = resolve_ggml_file(
+            self.requested_model,
+            self.fallback_model,
+            model_dir,
+        )
         if warning and on_event is not None:
             on_event(log_event("asr", warning, model=str(model_path)))
         chosen = language if language is not None else blank_language(self.language)
         binary = _resolve_binary(self.whisper_cpp_bin)
         if binary is not None or self._runner is not None:
             if on_event is not None:
-                on_event(log_event("asr", f"whisper.cpp binary: {binary or 'injected runner'}", model=str(model_path)))
+                on_event(
+                    log_event(
+                        "asr",
+                        f"whisper.cpp binary: {binary or 'injected runner'}",
+                        model=str(model_path),
+                    )
+                )
             return _transcribe_cli(
                 binary or "whisper-cli",
                 model_path,
@@ -81,8 +91,10 @@ class VulkanWhisperAsr:
             on_event(
                 log_event(
                     "asr",
-                    "Using pywhispercpp. GPU inference requires that binding to be built with GGML_VULKAN=1. "
-                    "A Vulkan whisper-cli takes priority when MEETSCRIBE_WHISPER_CPP or whisper-cli is set.",
+                    "Using pywhispercpp. GPU inference requires that binding "
+                    "to be built with GGML_VULKAN=1. "
+                    "A Vulkan whisper-cli takes priority when "
+                    "MEETSCRIBE_WHISPER_CPP or whisper-cli is set.",
                     model=str(model_path),
                 )
             )
@@ -141,9 +153,7 @@ def _run_cli(command: list[str], output: Path) -> None:
         raise BackendNotInstalled(f"Could not execute {command[0]}: {exc}") from exc
     if completed.returncode != 0 or not output.is_file():
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise MeetscribeError(
-            f"whisper-cli failed (exit {completed.returncode}). {detail}".strip()
-        )
+        raise MeetscribeError(f"whisper-cli failed (exit {completed.returncode}). {detail}".strip())
 
 
 def _transcribe_binding(

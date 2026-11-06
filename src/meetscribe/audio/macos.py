@@ -14,9 +14,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -61,18 +63,27 @@ class MacOSCapture:
 
     def record(
         self,
-        output_dir,
+        output_dir: Path,
         *,
         duration_s: float | None = None,
         on_event: Callable[[ProgressEvent], None] | None = None,
         on_chunk: ChunkCallback | None = None,
     ) -> CaptureResult:
-        mic = AudioDevice(id=self.mic_device or "default", name=self.mic_device or "default input", kind="mic")
+        mic = AudioDevice(
+            id=self.mic_device or "default",
+            name=self.mic_device or "default input",
+            kind="mic",
+        )
         system = SYSTEM_DEVICE
         if self.system_device:
             system = AudioDevice(id=self.system_device, name=self.system_device, kind="monitor")
 
-        def opener(device: AudioDevice, track_id: str, session: SyncedWavSession, sample_rate: int):
+        def opener(
+            device: AudioDevice,
+            track_id: str,
+            session: SyncedWavSession,
+            sample_rate: int,
+        ) -> object:
             if track_id == "system":
                 if self._system_opener is not None:
                     return self._system_opener(device, track_id, session, sample_rate)
@@ -93,7 +104,13 @@ class MacOSCapture:
         )
 
     def _helper_path(self) -> str:
-        configured = self.helper.strip() or os.environ.get("MEETSCRIBE_SYSTEM_AUDIO_BIN", "").strip()
+        configured = (
+            self.helper.strip()
+            or os.environ.get(
+                "MEETSCRIBE_SYSTEM_AUDIO_BIN",
+                "",
+            ).strip()
+        )
         if configured and Path(configured).expanduser().is_file():
             return str(Path(configured).expanduser())
         found = shutil.which("meetscribe-system-audio")
@@ -102,8 +119,9 @@ class MacOSCapture:
         raise AudioError(
             "macOS system audio needs the ScreenCaptureKit helper. From the repo:\n"
             "  mkdir -p ~/.local/bin\n"
-            "  swiftc -parse-as-library -O -o ~/.local/bin/meetscribe-system-audio scripts/macos/SystemAudioCapture.swift\n"
-            "  export PATH=\"$HOME/.local/bin:$PATH\"\n"
+            "  swiftc -parse-as-library -O -o ~/.local/bin/meetscribe-system-audio "
+            "scripts/macos/SystemAudioCapture.swift\n"
+            '  export PATH="$HOME/.local/bin:$PATH"\n'
             "Grant Screen Recording permission to the terminal, then record again. "
             "The microphone still uses Core Audio through sounddevice "
             "(uv sync --extra capture-macos)."
@@ -111,7 +129,13 @@ class MacOSCapture:
 
 
 class _MicStream:
-    def __init__(self, device: AudioDevice, track_id: str, session: SyncedWavSession, sample_rate: int) -> None:
+    def __init__(
+        self,
+        device: AudioDevice,
+        track_id: str,
+        session: SyncedWavSession,
+        sample_rate: int,
+    ) -> None:
         try:
             import sounddevice as sd
         except ImportError as exc:
@@ -122,7 +146,7 @@ class _MicStream:
         if isinstance(resolved, str) and resolved.isdigit():
             resolved = int(resolved)
 
-        def callback(indata, frames, time_info, status):
+        def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
             del time_info, status
             host = time.monotonic() - frames / sample_rate
             session.write(track_id, host, indata[:, 0].copy(), sample_rate)
@@ -150,7 +174,13 @@ HELPER_RATE = 48_000
 class _SystemHelper:
     """Read s16le mono PCM from the Swift helper. The helper always writes 48 kHz."""
 
-    def __init__(self, binary: str, session: SyncedWavSession, track_id: str, sample_rate: int) -> None:
+    def __init__(
+        self,
+        binary: str,
+        session: SyncedWavSession,
+        track_id: str,
+        sample_rate: int,
+    ) -> None:
         del sample_rate
         self._session = session
         self._track_id = track_id
@@ -163,12 +193,14 @@ class _SystemHelper:
             )
         except OSError as exc:
             raise AudioError(f"Could not start {binary}: {exc}") from exc
-        self._thread = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        import threading
-
-        self._thread = threading.Thread(target=self._read, name="meetscribe-system-audio", daemon=True)
+        self._thread = threading.Thread(
+            target=self._read,
+            name="meetscribe-system-audio",
+            daemon=True,
+        )
         self._thread.start()
 
     def close(self) -> None:

@@ -35,7 +35,13 @@ def _hardware(**overrides: object) -> HardwareInfo:
 
 def test_registry_lists_planned_backends() -> None:
     registry = build_registry()
-    assert registry.names("asr") == ["faster-whisper", "mlx-whisper", "openvino", "vulkan", "whisper.cpp"]
+    assert registry.names("asr") == [
+        "faster-whisper",
+        "mlx-whisper",
+        "openvino",
+        "vulkan",
+        "whisper.cpp",
+    ]
     assert registry.names("diarization") == ["track", "single-speaker", "pyannote", "sherpa-onnx"]
     assert registry.names("capture") == ["file", "macos", "windows", "linux"]
     implemented = {spec.name for spec in registry.list() if spec.implemented}
@@ -65,7 +71,13 @@ def test_unknown_backend() -> None:
 
 def test_auto_resolution() -> None:
     registry = build_registry()
-    apple = _hardware(system="Darwin", machine="arm64", apple_silicon=True, intel_cpu=False, intel_igpu=None)
+    apple = _hardware(
+        system="Darwin",
+        machine="arm64",
+        apple_silicon=True,
+        intel_cpu=False,
+        intel_igpu=None,
+    )
     intel = _hardware(system="Linux", intel_igpu=True)
     cpu = _hardware(system="Linux", intel_igpu=False)
     assert registry.resolve_asr("auto", apple) == "mlx-whisper"
@@ -114,7 +126,10 @@ def test_custom_backend_registration() -> None:
 
 
 def test_ct2_model_resolution() -> None:
-    model, warning = resolve_ct2_model("MediaTek-Research/Breeze-ASR-25", "openai/whisper-large-v3-turbo")
+    model, warning = resolve_ct2_model(
+        "MediaTek-Research/Breeze-ASR-25",
+        "openai/whisper-large-v3-turbo",
+    )
     assert model == "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
     assert warning is not None and "Breeze-ASR-25" in warning
     mapped, mapped_warning = resolve_ct2_model("openai/whisper-large-v3-turbo", "tiny")

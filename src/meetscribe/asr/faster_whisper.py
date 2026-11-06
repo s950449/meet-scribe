@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from meetscribe.errors import BackendNotInstalled
 from meetscribe.events import log_event
@@ -53,14 +54,21 @@ def resolve_ct2_model(model: str, fallback_model: str) -> tuple[str, str | None]
         selected = fallback_model.strip()
     if selected in CT2_ALIASES:
         return CT2_ALIASES[selected], None
-    if selected in BUILTIN_CT2_NAMES or "faster-whisper" in selected or selected.startswith("Systran/"):
+    if (
+        selected in BUILTIN_CT2_NAMES
+        or "faster-whisper" in selected
+        or selected.startswith("Systran/")
+    ):
         return selected, None
     local = Path(selected)
     if local.exists():
         return str(local), None
 
     fallback = fallback_model.strip() or "openai/whisper-large-v3-turbo"
-    ct2_fallback = CT2_ALIASES.get(fallback, fallback if "faster-whisper" in fallback else "large-v3-turbo")
+    ct2_fallback = CT2_ALIASES.get(
+        fallback,
+        fallback if "faster-whisper" in fallback else "large-v3-turbo",
+    )
     warning = (
         f"{selected} is not a CTranslate2 checkpoint. faster-whisper will load {ct2_fallback}. "
         "Use the mlx-whisper backend on Apple Silicon for MediaTek-Research/Breeze-ASR-25."
@@ -143,7 +151,7 @@ def _blank_to_none(language: str) -> str | None:
     return language
 
 
-def _load_model(model_id: str, device: str, compute_type: str) -> object:
+def _load_model(model_id: str, device: str, compute_type: str) -> Any:
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
