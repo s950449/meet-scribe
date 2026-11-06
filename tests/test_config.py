@@ -168,6 +168,44 @@ def test_provider_override_keeps_explicit_url_and_model() -> None:
     assert kept.llm.model_locked is True
 
 
+def test_known_base_url_selects_its_provider() -> None:
+    mac = apply_overrides(
+        load_config(environ={}, home=Path("/tmp/meetscribe-empty-home")),
+        {"llm_provider": "omlx"},
+    )
+    pointed_at_llama = apply_overrides(mac, {"llm_base_url": "http://127.0.0.1:8080/v1"})
+    assert pointed_at_llama.llm.provider == "llama-server"
+    assert pointed_at_llama.llm.model == "gemma-4-12b-it"
+    assert pointed_at_llama.llm.fallback_model == "qwen3.5-9b"
+    kept = apply_overrides(
+        mac,
+        {"llm_provider": "omlx", "llm_base_url": "http://127.0.0.1:8080/v1", "llm_model": "custom"},
+    )
+    assert kept.llm.provider == "omlx"
+    assert kept.llm.base_url == "http://127.0.0.1:8080/v1"
+    assert kept.llm.model == "custom"
+
+
+def test_toml_omlx_port_selects_provider_and_keeps_named_model(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[llm]\nbase_url = "http://127.0.0.1:8000/v1"\nmodel = "custom-alias"\n',
+        encoding="utf-8",
+    )
+    config = load_config(path, environ={})
+    assert config.llm.provider == "omlx"
+    assert config.llm.model == "custom-alias"
+    assert config.llm.model_locked is False
+
+
+def test_provider_name_is_case_insensitive(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[llm]\nprovider = " OMLX "\n', encoding="utf-8")
+    config = load_config(path, environ={})
+    assert config.llm.provider == "omlx"
+    assert config.llm.base_url == "http://127.0.0.1:8000/v1"
+
+
 def test_toml_provider_selects_omlx_defaults(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text('[llm]\nprovider = "omlx"\n', encoding="utf-8")

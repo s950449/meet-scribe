@@ -68,14 +68,29 @@ def llm_provider_for(system: str, machine: str) -> str:
     return "llama-server"
 
 
+def normalize_llm_provider(provider: str) -> str:
+    name = provider.strip().lower()
+    if name in {"omlx", "llama-server"}:
+        return name
+    raise ConfigError("llm provider must be 'omlx' or 'llama-server'")
+
+
 def provider_defaults(provider: str) -> tuple[str, str, str]:
     """Return ``(base_url, model, fallback_model)`` for a known provider."""
 
-    if provider == "omlx":
+    name = normalize_llm_provider(provider)
+    if name == "omlx":
         return OMLX_BASE_URL, OMLX_MODEL, OMLX_FALLBACK
-    if provider == "llama-server":
-        return LLAMA_SERVER_BASE_URL, LLAMA_SERVER_MODEL, LLAMA_SERVER_FALLBACK
-    raise ConfigError("llm provider must be 'omlx' or 'llama-server'")
+    return LLAMA_SERVER_BASE_URL, LLAMA_SERVER_MODEL, LLAMA_SERVER_FALLBACK
+
+
+def _provider_for_url(base_url: str) -> str | None:
+    normalized = base_url.strip().rstrip("/")
+    if normalized == OMLX_BASE_URL:
+        return "omlx"
+    if normalized == LLAMA_SERVER_BASE_URL:
+        return "llama-server"
+    return None
 
 
 def _current_provider() -> str:
@@ -120,6 +135,9 @@ class LlmSettings:
     profiles: dict[str, SamplingProfile] = field(default_factory=default_sampling_profiles)
     # Set when --llm-model (or MEETSCRIBE_LLM_MODEL) names the model explicitly.
     model_locked: bool = False
+    # Set when TOML, the environment, or the CLI names a model. Unlike
+    # model_locked, a TOML model still lets GET /v1/models choose the id.
+    model_explicit: bool = False
 
 
 @dataclass
@@ -242,12 +260,13 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
             llm,
             str(overrides["llm_provider"]),
             keep_base_url="llm_base_url" in overrides or llm.base_url_explicit,
-            keep_model="llm_model" in overrides or llm.model_locked,
+            keep_model="llm_model" in overrides or llm.model_explicit,
+            keep_fallback=llm.model_explicit,
         )
     if "llm_base_url" in overrides and overrides["llm_base_url"] is not None:
         llm = replace(llm, base_url=str(overrides["llm_base_url"]), base_url_explicit=True)
     if "llm_model" in overrides and overrides["llm_model"] is not None:
-        llm = replace(llm, model=str(overrides["llm_model"]), model_locked=True)
+        llm = replace(llm, model=str(overrides["llm_model"]), model_locked=True, model_explicit=True)
     if "llm_polish" in overrides and overrides["llm_polish"] is not None:
         llm = replace(llm, polish=bool(overrides["llm_polish"]))
     if "context_tokens" in overrides and overrides["context_tokens"] is not None:
@@ -264,6 +283,13 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
         llm = replace(llm, min_p=float(overrides["min_p"]))
     if "presence_penalty" in overrides and overrides["presence_penalty"] is not None:
         llm = replace(llm, presence_penalty=float(overrides["presence_penalty"]))
+    if "llm_base_url" in overrides and overrides.get("llm_base_url") is not None:
+        llm = _align_provider_with_url(
+            llm,
+            provider_explicit="llm_provider" in overrides and overrides.get("llm_provider") is not None,
+            model_explicit=llm.model_explicit,
+            fallback_explicit=False,
+        )
     if "capture_backend" in overrides and overrides["capture_backend"] is not None:
         capture = replace(capture, backend=str(overrides["capture_backend"]))
     if "mic_device" in overrides and overrides["mic_device"] is not None:
@@ -368,14 +394,15 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
             llm,
             str(llm_table["provider"]),
             keep_base_url="base_url" in llm_table or llm.base_url_explicit,
-            keep_model="model" in llm_table or llm.model_locked,
+            keep_model="model" in llm_table or llm.model_explicit,
+            keep_fallback="fallback_model" in llm_table,
         )
     if "base_url" in llm_table:
         llm = replace(llm, base_url=str(llm_table["base_url"]), base_url_explicit=True)
     if "api_key_env" in llm_table:
         llm = replace(llm, api_key_env=str(llm_table["api_key_env"]))
     if "model" in llm_table:
-        llm = replace(llm, model=str(llm_table["model"]))
+        llm = replace(llm, model=str(llm_table["model"]), model_explicit=True)
     if "fallback_model" in llm_table:
         llm = replace(llm, fallback_model=str(llm_table["fallback_model"]))
     if "polish" in llm_table:
@@ -399,6 +426,13 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         llm = replace(llm, presence_penalty=float(llm_table["presence_penalty"]))
     profiles = _merge_profile_table(llm.profiles, _table(llm_table.get("profiles"), "llm.profiles"))
     llm = replace(llm, profiles=profiles)
+    if "base_url" in llm_table and "provider" not in llm_table:
+        llm = _align_provider_with_url(
+            llm,
+            provider_explicit=False,
+            model_explicit="model" in llm_table or llm.model_explicit,
+            fallback_explicit="fallback_model" in llm_table,
+        )
 
     capture_table = _table(data.get("capture"), "capture")
     if "backend" in capture_table:
@@ -453,19 +487,49 @@ def _apply_env(config: AppConfig, env: Mapping[str, str]) -> AppConfig:
     return apply_overrides(config, overrides)
 
 
+def _align_provider_with_url(
+    settings: LlmSettings,
+    *,
+    provider_explicit: bool,
+    model_explicit: bool,
+    fallback_explicit: bool,
+) -> LlmSettings:
+    """A bare ``8080`` or ``8000`` base URL selects that server's provider.
+
+    ``provider`` set in TOML or on the CLI wins. A custom port is left alone.
+    """
+
+    if provider_explicit:
+        return settings
+    implied = _provider_for_url(settings.base_url)
+    if implied is None or implied == settings.provider:
+        return settings
+    return _apply_provider(
+        settings,
+        implied,
+        keep_base_url=True,
+        keep_model=model_explicit,
+        keep_fallback=fallback_explicit,
+    )
+
+
 def _apply_provider(
     settings: LlmSettings,
     provider: str,
     *,
     keep_base_url: bool,
     keep_model: bool,
+    keep_fallback: bool = False,
 ) -> LlmSettings:
-    base_url, model, fallback = provider_defaults(provider)
-    updates: dict[str, object] = {"provider": provider}
+    name = normalize_llm_provider(provider)
+    base_url, model, fallback = provider_defaults(name)
+    updates: dict[str, object] = {"provider": name}
     if not keep_base_url:
         updates["base_url"] = base_url
     if not keep_model:
         updates["model"] = model
+        updates["model_explicit"] = False
+    if not keep_fallback:
         updates["fallback_model"] = fallback
     return replace(settings, **updates)
 

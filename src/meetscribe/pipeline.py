@@ -281,7 +281,7 @@ def _polish(config, utterances, events, polisher, do_polish, environ) -> tuple[A
             stage_event(
                 "polish",
                 "start",
-                message=f"Polishing with {config.llm.model} at {config.llm.base_url}",
+                message=f"Polishing with {_active_model(chosen, config)} at {config.llm.base_url}",
             )
         )
     polished = chosen.polish(utterances, on_event=events.emit)
@@ -307,12 +307,20 @@ def _summarize(config, utterances, events, summarizer, do_summary, title, enviro
             stage_event(
                 "summarize",
                 "start",
-                message=f"Summarizing with {config.llm.model}",
+                message=f"Summarizing with {_active_model(chosen, config)} at {config.llm.base_url}",
             )
         )
     summary = chosen.summarize(utterances, title=title, speaker_map=dict(config.speaker_map), on_event=events.emit)
     events.emit(stage_event("summarize", "done", message="Summary ready"))
     return summary
+
+
+def _active_model(chosen: object, config: AppConfig) -> str:
+    client = getattr(chosen, "client", None)
+    model = getattr(client, "model", None)
+    if isinstance(model, str) and model:
+        return model
+    return config.llm.model
 
 
 def _write(document: MeetingDocument, markdown_path: Path, events: EventSink) -> MeetingResult:

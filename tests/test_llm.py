@@ -133,6 +133,39 @@ def test_sampling_profile_follows_the_loaded_model() -> None:
     assert mlx_gemma.sampling.presence_penalty is None
 
 
+def test_omlx_model_list_prefers_the_configured_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from meetscribe.llm.profiles import resolve_listed_model, select_active_llm
+
+    listed = ["bge-m3", "Qwen3.5-9B-MLX-4bit", "gemma-4-12B-it-4bit"]
+    assert resolve_listed_model(listed, "gemma-4-12B-it-4bit", allow_singleton=True) == "gemma-4-12B-it-4bit"
+    assert (
+        resolve_listed_model(listed, "mlx-community/gemma-4-12B-it-4bit", allow_singleton=True)
+        == "gemma-4-12B-it-4bit"
+    )
+    assert (
+        resolve_listed_model(listed, "mlx-community/Qwen3.5-9B-MLX-4bit", allow_singleton=True)
+        == "Qwen3.5-9B-MLX-4bit"
+    )
+    assert resolve_listed_model(["unsloth/Qwen3.5-9B-GGUF"], "gemma-4-12b-it", allow_singleton=True) == (
+        "unsloth/Qwen3.5-9B-GGUF"
+    )
+    assert resolve_listed_model(listed, "missing-model", allow_singleton=True) is None
+
+    config = apply_overrides(AppConfig(), {"llm_provider": "omlx"})
+
+    def fake_fetch(base_url: str, api_key: str, *, timeout: float = 2.0, preferred: str = "") -> str | None:
+        assert base_url == "http://127.0.0.1:8000/v1"
+        assert preferred == "gemma-4-12B-it-4bit"
+        return resolve_listed_model(listed, preferred, allow_singleton=True)
+
+    monkeypatch.setattr("meetscribe.llm.profiles.fetch_loaded_model", fake_fetch)
+    active = select_active_llm(config)
+    assert active.source == "server"
+    assert active.model == "gemma-4-12B-it-4bit"
+    assert active.sampling.temperature == 1.0
+    assert active.sampling.presence_penalty is None
+
+
 def test_request_disables_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
     from meetscribe.llm.client import OpenAIChatClient
 
@@ -183,6 +216,8 @@ def test_strip_thinking_blocks() -> None:
     assert strip_thinking(gemma) == '{"utterances": []}'
     empty = "<|channel>thought\n<channel|>答案"
     assert strip_thinking(empty) == "答案"
+    unclosed = '<think>\n先想 {not json}\n{"overview": "好"}'
+    assert strip_thinking(unclosed) == '{"overview": "好"}'
 
 
 def test_prompts_keep_english_terms_and_traditional_chinese() -> None:

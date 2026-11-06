@@ -33,11 +33,12 @@ def build_summarizer(
 
 
 def _client(config: AppConfig, environ: Mapping[str, str] | None) -> OpenAIChatClient:
-    active = select_active_llm(config)
+    api_key = config.resolved_api_key(environ)
+    active = select_active_llm(config, api_key=api_key)
     sampling = active.sampling
     return OpenAIChatClient(
         base_url=config.llm.base_url,
-        api_key=config.resolved_api_key(environ),
+        api_key=api_key,
         model=active.model,
         temperature=sampling.temperature,
         top_p=sampling.top_p,

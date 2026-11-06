@@ -74,7 +74,17 @@ class IdentityPolisher:
 
 
 def _render_utterance(utterance: AttributedUtterance) -> str:
-    return f"{utterance.speaker_id} {utterance.text}"
+    """Estimate one JSON row, which is what the request actually sends."""
+
+    return json.dumps(
+        {
+            "index": 0,
+            "speaker": utterance.speaker_id,
+            "start": round(utterance.start, 2),
+            "text": utterance.text,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _payload(utterances: Sequence[AttributedUtterance]) -> str:

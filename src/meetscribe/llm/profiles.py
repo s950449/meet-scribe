@@ -19,8 +19,8 @@ class ActiveLlm:
     profile: str | None
 
 
-def fetch_loaded_model(base_url: str, api_key: str, *, timeout: float = 2.0) -> str | None:
-    """Return the first id from ``GET {base_url}/models``, or None if the server is down."""
+def fetch_model_ids(base_url: str, api_key: str, *, timeout: float = 2.0) -> list[str] | None:
+    """Return ids from ``GET {base_url}/models``, or None if the server is down."""
 
     url = base_url.rstrip("/") + "/models"
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
@@ -32,12 +32,64 @@ def fetch_loaded_model(base_url: str, api_key: str, *, timeout: float = 2.0) -> 
     if not isinstance(payload, dict):
         return None
     data = payload.get("data")
-    if not isinstance(data, list) or not data:
+    if not isinstance(data, list):
         return None
-    first = data[0]
-    if isinstance(first, dict) and first.get("id"):
-        return str(first["id"])
+    ids: list[str] = []
+    for item in data:
+        if isinstance(item, dict) and item.get("id"):
+            ids.append(str(item["id"]))
+    return ids
+
+
+def resolve_listed_model(
+    model_ids: list[str],
+    preferred: str,
+    *,
+    allow_singleton: bool,
+) -> str | None:
+    """Pick the server id that corresponds to ``preferred``.
+
+    oMLX lists every model in the directory. The configured name may be the
+    directory leaf (``gemma-4-12B-it-4bit``) or the Hugging Face repo id.
+    llama-server in single-model mode lists one alias, which wins even when
+    it differs from the configured name. A longer list with no match returns
+    None so the caller keeps the configured id instead of ``data[0]``.
+    """
+
+    ids = [model_id.strip() for model_id in model_ids if model_id.strip()]
+    if not ids:
+        return None
+    wanted = preferred.strip().lower()
+    if wanted:
+        for model_id in ids:
+            if model_id.lower() == wanted:
+                return model_id
+        contained = [model_id for model_id in ids if model_id.lower() in wanted]
+        if contained:
+            contained.sort(key=len, reverse=True)
+            return contained[0]
+        containing = [model_id for model_id in ids if wanted in model_id.lower()]
+        if containing:
+            containing.sort(key=len)
+            return containing[0]
+    if allow_singleton and len(ids) == 1:
+        return ids[0]
     return None
+
+
+def fetch_loaded_model(
+    base_url: str,
+    api_key: str,
+    *,
+    timeout: float = 2.0,
+    preferred: str = "",
+) -> str | None:
+    """Return the model id to call, or None when the server is down or ambiguous."""
+
+    ids = fetch_model_ids(base_url, api_key, timeout=timeout)
+    if ids is None:
+        return None
+    return resolve_listed_model(ids, preferred, allow_singleton=True)
 
 
 def select_active_llm(
@@ -45,6 +97,7 @@ def select_active_llm(
     *,
     detected: str | None = None,
     probe: bool = True,
+    api_key: str | None = None,
 ) -> ActiveLlm:
     """Pick the model id, then the sampling profile.
 
@@ -59,7 +112,12 @@ def select_active_llm(
         source = "cli"
     else:
         if detected is None and probe:
-            detected = fetch_loaded_model(settings.base_url, config.resolved_api_key())
+            key = config.resolved_api_key() if api_key is None else api_key
+            detected = fetch_loaded_model(
+                settings.base_url,
+                key,
+                preferred=settings.model,
+            )
         if detected:
             model = detected
             source = "server"

@@ -106,7 +106,36 @@ def strip_thinking(text: str) -> str:
     cleaned = _THINK_BLOCK.sub("", text)
     cleaned = _GEMMA_THOUGHT.sub("", cleaned)
     cleaned = _THINK_TOKEN.sub("", cleaned)
+    cleaned = _strip_unclosed_think(cleaned)
     return cleaned.strip()
+
+
+def _strip_unclosed_think(text: str) -> str:
+    """Keep a JSON object when ``<think>`` is never closed.
+
+    Braces inside the reasoning are skipped unless they decode as an object.
+    The last object wins, which is the answer after the reasoning.
+    """
+
+    match = re.search(r"<think>", text, flags=re.IGNORECASE)
+    if match is None:
+        return text
+    prefix = text[: match.start()]
+    rest = text[match.end() :]
+    decoder = json.JSONDecoder()
+    found: str | None = None
+    for index, char in enumerate(rest):
+        if char != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(rest[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            found = rest[index : index + end]
+    if found is not None:
+        return prefix + found
+    return prefix
 
 
 def visible_completion(message: object) -> str:
@@ -123,8 +152,9 @@ def visible_completion(message: object) -> str:
     if not cleaned:
         raise LlmError(
             "LLM returned no answer after stripping thinking output. "
-            "Start llama-server with --jinja --reasoning off "
-            "and --chat-template-kwargs '{\"enable_thinking\":false}'."
+            "The request already sends chat_template_kwargs.enable_thinking=false. "
+            "On llama-server also pass --jinja --reasoning off. "
+            "On oMLX, leave the model's Enable Thinking force lock off."
         )
     return cleaned
 
