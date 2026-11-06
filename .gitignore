@@ -13,3 +13,4 @@ build/
 htmlcov/
 *.wav
 .meetscribe-work/
+*.md.work/

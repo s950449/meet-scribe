@@ -6,20 +6,22 @@ A Qt, GTK, or Electron shell should call these functions and pass its own
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
 from meetscribe.asr.base import AsrBackend
 from meetscribe.audio.base import normalize_tracks
 from meetscribe.audio.file_input import FileInput
+from meetscribe.checkpoint import Checkpoint, atomic_text, file_fingerprint, fingerprint
 from meetscribe.config import AppConfig, language_hint
 from meetscribe.diarization.base import DiarizationBackend
-from meetscribe.document import dump_document, load_document
+from meetscribe.document import document_to_dict, load_document
 from meetscribe.errors import AudioError
 from meetscribe.events import log_event, stage_event
 from meetscribe.hardware import HardwareInfo, detect_hardware, recommended_diarization
@@ -146,6 +148,7 @@ def run_meeting(
     do_summary: bool = True,
     keep_audio: bool = False,
     work_dir: Path | None = None,
+    resume: bool = False,
     environ: Mapping[str, str] | None = None,
 ) -> MeetingResult:
     """Run the file pipeline from audio through Markdown."""
@@ -155,9 +158,10 @@ def run_meeting(
     events = sink or _Null()
     reg = registry or build_registry()
     hw = hardware or detect_hardware()
-    owned_work = work_dir is None
-    scratch = work_dir if work_dir is not None else Path(tempfile.mkdtemp(prefix="meetscribe-"))
+    scratch = (work_dir or default_work_dir(config, mic, output)).expanduser()
+    checkpoint = Checkpoint(scratch, resume=resume)
     try:
+        events.emit(log_event("checkpoint", f"Checkpoints: {scratch}", work_dir=str(scratch)))
         captured = FileInput(mic=mic, system=system).record(scratch / "raw")
         events.emit(
             stage_event(
@@ -167,9 +171,41 @@ def run_meeting(
                 tracks=len(captured.tracks),
             )
         )
+        source_paths = {track.path.resolve() for track in captured.tracks}
+        destinations = {
+            (scratch / "audio" / f"{track.track_id}.wav").resolve() for track in captured.tracks
+        }
+        aliases_source = any(
+            dest.exists() and source.samefile(dest)
+            for source in source_paths
+            for dest in destinations
+        )
+        if source_paths & destinations or aliases_source:
+            raise AudioError(
+                "Work directory would overwrite source audio. Choose another --work-dir."
+            )
         normalized = normalize_tracks(captured, scratch / "audio", on_event=events.emit)
-        segments = _transcribe(config, normalized.tracks, events, reg, hw, asr)
-        turns = _diarize(config, normalized.tracks, events, reg, diarizer)
+        inputs = [(track.track_id, file_fingerprint(track.path)) for track in captured.tracks]
+        asr_config = asdict(config.asr)
+        asr_config["resolved_backend"] = getattr(asr, "name", None) or reg.resolve_asr(
+            config.asr.backend, hw
+        )
+        segments: list[TranscriptSegment] = []
+        for track, source in zip(normalized.tracks, inputs, strict=True):
+            key = fingerprint((source, asr_config))
+            segments.extend(
+                checkpoint.stage(
+                    "asr:" + track.track_id,
+                    key,
+                    partial(_transcribe, config, [track], events, reg, hw, asr),
+                )
+            )
+        diar_key = fingerprint(
+            (inputs, config.diarization.backend, getattr(diarizer, "name", None))
+        )
+        turns = checkpoint.stage(
+            "diarize", diar_key, lambda: _diarize(config, normalized.tracks, events, reg, diarizer)
+        )
         events.emit(stage_event("merge", "start", message="Assigning speakers"))
         utterances = assign_speakers(segments, turns)
         events.emit(
@@ -180,31 +216,88 @@ def run_meeting(
                 utterances=len(utterances),
             )
         )
-        polished = _polish(config, utterances, events, polisher, do_polish, environ)
-        summary = _summarize(
-            config,
-            polished,
-            events,
-            summarizer,
-            do_summary,
-            title or _title_from_path(mic),
-            environ,
-        )
+        meeting_title = title or _title_from_path(mic)
         document = MeetingDocument(
-            title=title or _title_from_path(mic),
+            title=meeting_title,
             started_at=captured.started_at,
-            summary=summary,
-            utterances=tuple(polished),
+            summary=MeetingSummary(overview=PENDING_SUMMARY),
+            utterances=tuple(utterances),
             speaker_map=dict(config.speaker_map),
         )
         destination = _resolve_output(config, output, document)
+        output_paths = {destination.resolve(), destination.with_suffix(".json").resolve()}
+        if source_paths & output_paths or any(
+            target.exists() and source.samefile(target)
+            for source in source_paths
+            for target in output_paths
+        ):
+            raise AudioError("Output would overwrite source audio. Choose another --output.")
+        _write(document, destination, events)
+        llm_config = asdict(config.llm)
+        llm_config.pop("api_key_env", None)
+        polish_key = fingerprint(
+            (
+                inputs,
+                asr_config,
+                diar_key,
+                utterances,
+                llm_config,
+                do_polish,
+                getattr(polisher, "name", None),
+            )
+        )
+        polished = checkpoint.stage(
+            "polish",
+            polish_key,
+            lambda: _polish(config, utterances, events, polisher, do_polish, environ),
+        )
+        document.utterances = tuple(polished)
+        _write(document, destination, events)
+        summary_key = fingerprint(
+            (
+                polish_key,
+                polished,
+                llm_config,
+                do_summary,
+                meeting_title,
+                config.speaker_map,
+                getattr(summarizer, "name", None),
+            )
+        )
+        document.summary = checkpoint.stage(
+            "summary",
+            summary_key,
+            lambda: _summarize(
+                config, polished, events, summarizer, do_summary, meeting_title, environ
+            ),
+        )
         result = _write(document, destination, events)
         if keep_audio:
             _keep_audio(scratch / "audio", result.markdown_path)
         return result
+    except BaseException:
+        events.emit(
+            log_event(
+                "checkpoint",
+                f'Processing interrupted. Resume with --resume --work-dir "{scratch}" '
+                "using the same source and options.",
+                work_dir=str(scratch),
+            )
+        )
+        raise
     finally:
-        if owned_work:
-            shutil.rmtree(scratch, ignore_errors=True)
+        checkpoint.close()
+
+
+def default_work_dir(config: AppConfig, source: Path, output: Path | None) -> Path:
+    """Choose a stable recovery directory without depending on file contents."""
+    if output is not None:
+        target = Path(output).expanduser()
+        if not target.suffix:
+            target = target.with_suffix(".md")
+        return target.with_name(target.name + ".work")
+    key = fingerprint(str(source.expanduser().resolve()))[:12]
+    return config.output_dir.expanduser() / ".meetscribe-work" / f"{source.stem}-{key}"
 
 
 def summarize_file(
@@ -400,9 +493,11 @@ def _active_model(chosen: object, config: AppConfig) -> str:
 
 def _write(document: MeetingDocument, markdown_path: Path, events: EventSink) -> MeetingResult:
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.write_text(render_markdown(document), encoding="utf-8")
+    atomic_text(markdown_path, render_markdown(document))
     json_path = markdown_path.with_suffix(".json")
-    dump_document(document, json_path)
+    atomic_text(
+        json_path, json.dumps(document_to_dict(document), ensure_ascii=False, indent=2) + "\n"
+    )
     events.emit(
         stage_event(
             "write",
@@ -419,8 +514,11 @@ def _keep_audio(audio_dir: Path, markdown_path: Path) -> None:
     if not audio_dir.is_dir():
         return
     dest = markdown_path.with_name(markdown_path.stem + ".audio")
+    resolved_dest, scratch = dest.resolve(), audio_dir.parent.resolve()
     if dest.exists():
-        shutil.rmtree(dest)
+        raise AudioError(f"Audio output already exists: {dest}. Choose another --output.")
+    if resolved_dest.is_relative_to(scratch) or scratch.is_relative_to(resolved_dest):
+        raise AudioError("Audio output overlaps the work directory. Choose another --output.")
     shutil.copytree(audio_dir, dest)
 
 
