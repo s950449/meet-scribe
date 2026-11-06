@@ -2,16 +2,18 @@
 
 WAV PCM is handled with the standard library. Other containers are read with
 ``soundfile`` when that extra is installed. Compressed meeting exports (m4a,
-mp3) need ffmpeg first.
+mp3) are decoded automatically when ffmpeg is available on PATH.
 """
 
 from __future__ import annotations
 
+import tempfile
 import wave
 from pathlib import Path
 
 import numpy as np
 
+from meetscribe.audio.ffmpeg import decode_audio
 from meetscribe.errors import AudioError
 from meetscribe.types import AudioTrack
 
@@ -36,12 +38,21 @@ def read_audio(path: Path) -> tuple[np.ndarray, int]:
     if path.suffix.lower() == ".wav":
         try:
             return _read_wav(path)
-        except AudioError as wav_error:
+        except (AudioError, EOFError):
+            pass
+    try:
+        return _read_soundfile(path)
+    except AudioError:
+        with tempfile.TemporaryDirectory(prefix="meetscribe-decode-") as directory:
+            decoded = Path(directory) / "audio.wav"
+            decode_audio(path, decoded)
             try:
-                return _read_soundfile(path)
-            except AudioError:
-                raise wav_error from None
-    return _read_soundfile(path)
+                samples, rate = _read_wav(decoded)
+            except (AudioError, EOFError) as exc:
+                raise AudioError(f"ffmpeg produced invalid audio for {path.name}: {exc}") from exc
+            if samples.size == 0:
+                raise AudioError(f"ffmpeg produced empty audio for {path.name}") from None
+            return samples, rate
 
 
 def prepare_track(src: Path, dest: Path, track_id: str) -> AudioTrack:
@@ -138,6 +149,9 @@ def _read_soundfile(path: Path) -> tuple[np.ndarray, int]:
             "Install meetscribe[audio] for formats libsndfile supports, "
             "or convert with ffmpeg to 16-bit WAV."
         ) from exc
-    data, sample_rate = sf.read(str(path), always_2d=True, dtype="float32")
+    try:
+        data, sample_rate = sf.read(str(path), always_2d=True, dtype="float32")
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise AudioError(f"Cannot decode {path.name} with libsndfile: {exc}") from exc
     mono = data.mean(axis=1) if data.shape[1] > 1 else data[:, 0]
     return np.asarray(mono, dtype=np.float32), int(sample_rate)
