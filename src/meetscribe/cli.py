@@ -75,7 +75,9 @@ def record(
     ] = Path("recording"),
     duration: Annotated[
         float | None,
-        typer.Option("--duration", "-d", help="Stop after this many seconds."),
+        typer.Option(
+            "--duration", "-d", help="Stop after this many recorded seconds, excluding pauses."
+        ),
     ] = None,
     backend: Annotated[
         str | None,
@@ -103,7 +105,7 @@ def record(
         bool, typer.Option("--list-devices", help="Print capture devices and exit.")
     ] = False,
 ) -> None:
-    """Record microphone and system audio onto one timebase. Ctrl+C stops."""
+    """Record mic and system audio. In a terminal, p pauses/resumes; q or Ctrl+C stops."""
 
     if list_devices:
         typer.echo(_device_report())
@@ -175,6 +177,12 @@ def transcribe(
     keep_audio: Annotated[
         bool, typer.Option("--keep-audio", help="Keep the 16 kHz wavs next to the note.")
     ] = False,
+    work_dir: Annotated[
+        Path | None, typer.Option("--work-dir", help="Directory for persistent checkpoints.")
+    ] = None,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Continue from compatible completed stages.")
+    ] = False,
 ) -> None:
     """Transcribe audio, assign speakers, and optionally polish. Does not summarize."""
 
@@ -201,6 +209,8 @@ def transcribe(
             do_summary=False,
             do_polish=not no_polish,
             keep_audio=keep_audio,
+            work_dir=work_dir,
+            resume=resume,
         )
         if not sink.json_events:
             sink.emit(
@@ -273,7 +283,8 @@ def run(
     ] = None,
     title: Annotated[str | None, typer.Option("--title", help="Meeting title.")] = None,
     duration: Annotated[
-        float | None, typer.Option("--duration", "-d", help="Recording length in seconds.")
+        float | None,
+        typer.Option("--duration", "-d", help="Recording length in seconds, excluding pauses."),
     ] = None,
     asr_backend: Annotated[str | None, typer.Option("--asr-backend")] = None,
     asr_model: Annotated[str | None, typer.Option("--asr-model")] = None,
@@ -303,10 +314,20 @@ def run(
     mic_device: Annotated[str | None, typer.Option("--mic-device")] = None,
     system_device: Annotated[str | None, typer.Option("--system-device")] = None,
     chunk_seconds: Annotated[float | None, typer.Option("--chunk-seconds")] = None,
+    work_dir: Annotated[
+        Path | None, typer.Option("--work-dir", help="Directory for persistent checkpoints.")
+    ] = None,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Continue from compatible completed stages.")
+    ] = False,
 ) -> None:
     """Record or load audio, then transcribe, polish, and summarize."""
 
     def action(sink: StdioSink) -> None:
+        if resume and source is None:
+            raise MeetscribeError(
+                "Pass the original source file or recording directory with --resume."
+            )
         config = _config(
             ctx,
             asr_backend=asr_backend,
@@ -338,6 +359,8 @@ def run(
             do_polish=not no_polish,
             do_summary=True,
             keep_audio=keep_audio,
+            work_dir=work_dir,
+            resume=resume,
         )
 
     _guard(ctx, action)

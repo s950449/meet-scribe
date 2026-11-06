@@ -1,11 +1,41 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from typer.testing import CliRunner
 
 from meetscribe.cli import app
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("command", ["run", "transcribe"])
+def test_resume_options_reach_pipeline(tmp_path: Path, monkeypatch, command: str) -> None:
+    captured = {}
+
+    def fake_run(config, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(json_path=tmp_path / "note.json")
+
+    monkeypatch.setattr("meetscribe.cli.run_meeting", fake_run)
+    result = runner.invoke(
+        app,
+        [command, str(tmp_path / "mic.wav"), "--resume", "--work-dir", str(tmp_path / "work")],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["resume"] is True
+    assert captured["work_dir"] == tmp_path / "work"
+
+
+def test_resume_without_source_does_not_start_recording(monkeypatch) -> None:
+    def unexpected_record(*args, **kwargs):
+        pytest.fail("resume must never overwrite a recording")
+
+    monkeypatch.setattr("meetscribe.cli.record_audio", unexpected_record)
+    result = runner.invoke(app, ["run", "--resume"])
+    assert result.exit_code != 0
+    assert "source" in result.output.lower()
 
 
 def test_help_and_version() -> None:
