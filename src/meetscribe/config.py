@@ -8,6 +8,7 @@ tokens are never read from the TOML file.
 from __future__ import annotations
 
 import os
+import platform
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -17,9 +18,16 @@ from meetscribe.errors import ConfigError
 
 DEFAULT_ASR_MODEL = "MediaTek-Research/Breeze-ASR-25"
 DEFAULT_FALLBACK_MODEL = "openai/whisper-large-v3-turbo"
-DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8080/v1"
-DEFAULT_LLM_MODEL = "gemma-4-12b-it"
-DEFAULT_LLM_FALLBACK_MODEL = "qwen3.5-9b"
+LLAMA_SERVER_BASE_URL = "http://127.0.0.1:8080/v1"
+OMLX_BASE_URL = "http://127.0.0.1:8000/v1"
+LLAMA_SERVER_MODEL = "gemma-4-12b-it"
+LLAMA_SERVER_FALLBACK = "qwen3.5-9b"
+# oMLX advertises the model directory's leaf name on GET /v1/models.
+OMLX_MODEL = "gemma-4-12B-it-4bit"
+OMLX_FALLBACK = "Qwen3.5-9B-MLX-4bit"
+DEFAULT_LLM_BASE_URL = LLAMA_SERVER_BASE_URL
+DEFAULT_LLM_MODEL = LLAMA_SERVER_MODEL
+DEFAULT_LLM_FALLBACK_MODEL = LLAMA_SERVER_FALLBACK
 # Sent only when OPENAI_API_KEY is unset. llama-server does not check it.
 DUMMY_API_KEY = "llama-server"
 SECRET_KEYS = frozenset({"api_key", "hf_token", "token", "openai_api_key"})
@@ -52,33 +60,51 @@ class SamplingProfile:
     presence_penalty: float | None = None
 
 
-def default_sampling_profiles() -> dict[str, SamplingProfile]:
-    """Unsloth card values. Gemma is the default model; Qwen is the smaller GGUF."""
+def llm_provider_for(system: str, machine: str) -> str:
+    """Apple Silicon uses oMLX. Every other machine uses llama-server."""
 
+    if system == "Darwin" and machine.lower() in {"arm64", "aarch64"}:
+        return "omlx"
+    return "llama-server"
+
+
+def provider_defaults(provider: str) -> tuple[str, str, str]:
+    """Return ``(base_url, model, fallback_model)`` for a known provider."""
+
+    if provider == "omlx":
+        return OMLX_BASE_URL, OMLX_MODEL, OMLX_FALLBACK
+    if provider == "llama-server":
+        return LLAMA_SERVER_BASE_URL, LLAMA_SERVER_MODEL, LLAMA_SERVER_FALLBACK
+    raise ConfigError("llm provider must be 'omlx' or 'llama-server'")
+
+
+def _current_provider() -> str:
+    return llm_provider_for(platform.system(), platform.machine())
+
+
+def default_sampling_profiles() -> dict[str, SamplingProfile]:
+    """Unsloth card values for the GGUF aliases and the MLX folder names."""
+
+    gemma = SamplingProfile(temperature=1.0, top_p=0.95, top_k=64, min_p=0.0, presence_penalty=None)
+    qwen = SamplingProfile(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5)
     return {
-        "gemma-4-12b-it": SamplingProfile(
-            temperature=1.0,
-            top_p=0.95,
-            top_k=64,
-            min_p=0.0,
-            presence_penalty=None,
-        ),
-        "qwen3.5-9b": SamplingProfile(
-            temperature=0.7,
-            top_p=0.8,
-            top_k=20,
-            min_p=0.0,
-            presence_penalty=1.5,
-        ),
+        "gemma-4-12b-it": gemma,
+        "gemma-4-12B-it-4bit": gemma,
+        "mlx-community/gemma-4-12B-it-4bit": gemma,
+        "qwen3.5-9b": qwen,
+        "Qwen3.5-9B-MLX-4bit": qwen,
+        "mlx-community/Qwen3.5-9B-MLX-4bit": qwen,
     }
 
 
 @dataclass
 class LlmSettings:
-    base_url: str = DEFAULT_LLM_BASE_URL
+    provider: str = field(default_factory=_current_provider)
+    base_url: str = field(default_factory=lambda: provider_defaults(_current_provider())[0])
     api_key_env: str = "OPENAI_API_KEY"
-    model: str = DEFAULT_LLM_MODEL
-    fallback_model: str = DEFAULT_LLM_FALLBACK_MODEL
+    model: str = field(default_factory=lambda: provider_defaults(_current_provider())[1])
+    fallback_model: str = field(default_factory=lambda: provider_defaults(_current_provider())[2])
+    base_url_explicit: bool = False
     polish: bool = True
     # Practical KV-cache size for an iGPU. Both suggested models natively
     # support 256K; raise this together with llama-server -c when memory allows.
@@ -211,8 +237,15 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
         asr = replace(asr, whisper_cpp_bin=str(overrides["whisper_cpp_bin"]))
     if "diarization_backend" in overrides and overrides["diarization_backend"] is not None:
         diar = replace(diar, backend=str(overrides["diarization_backend"]))
+    if "llm_provider" in overrides and overrides["llm_provider"] is not None:
+        llm = _apply_provider(
+            llm,
+            str(overrides["llm_provider"]),
+            keep_base_url="llm_base_url" in overrides or llm.base_url_explicit,
+            keep_model="llm_model" in overrides or llm.model_locked,
+        )
     if "llm_base_url" in overrides and overrides["llm_base_url"] is not None:
-        llm = replace(llm, base_url=str(overrides["llm_base_url"]))
+        llm = replace(llm, base_url=str(overrides["llm_base_url"]), base_url_explicit=True)
     if "llm_model" in overrides and overrides["llm_model"] is not None:
         llm = replace(llm, model=str(overrides["llm_model"]), model_locked=True)
     if "llm_polish" in overrides and overrides["llm_polish"] is not None:
@@ -330,8 +363,15 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         diar = replace(diar, hf_token_env=str(diar_table["hf_token_env"]))
 
     llm_table = _table(data.get("llm"), "llm")
+    if "provider" in llm_table:
+        llm = _apply_provider(
+            llm,
+            str(llm_table["provider"]),
+            keep_base_url="base_url" in llm_table or llm.base_url_explicit,
+            keep_model="model" in llm_table or llm.model_locked,
+        )
     if "base_url" in llm_table:
-        llm = replace(llm, base_url=str(llm_table["base_url"]))
+        llm = replace(llm, base_url=str(llm_table["base_url"]), base_url_explicit=True)
     if "api_key_env" in llm_table:
         llm = replace(llm, api_key_env=str(llm_table["api_key_env"]))
     if "model" in llm_table:
@@ -411,6 +451,23 @@ def _apply_env(config: AppConfig, env: Mapping[str, str]) -> AppConfig:
     if not overrides:
         return config
     return apply_overrides(config, overrides)
+
+
+def _apply_provider(
+    settings: LlmSettings,
+    provider: str,
+    *,
+    keep_base_url: bool,
+    keep_model: bool,
+) -> LlmSettings:
+    base_url, model, fallback = provider_defaults(provider)
+    updates: dict[str, object] = {"provider": provider}
+    if not keep_base_url:
+        updates["base_url"] = base_url
+    if not keep_model:
+        updates["model"] = model
+        updates["fallback_model"] = fallback
+    return replace(settings, **updates)
 
 
 def _merge_profile_table(

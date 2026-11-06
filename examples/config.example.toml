@@ -21,13 +21,17 @@ backend = "auto" # auto | track | single-speaker | pyannote | sherpa-onnx
 hf_token_env = "HF_TOKEN"
 
 [llm]
-# llama.cpp llama-server. The model name is a label; single-model llama-server ignores it.
-# Default GGUF: unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL (7.37 GB).
-# Fallback: unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL (5.97 GB).
-base_url = "http://127.0.0.1:8080/v1"
+# Leave provider, base_url, and model unset to follow the machine.
+# Apple Silicon: omlx at http://127.0.0.1:8000/v1
+#   model gemma-4-12B-it-4bit (mlx-community/gemma-4-12B-it-4bit, 6.77 GB)
+#   fallback Qwen3.5-9B-MLX-4bit (mlx-community/Qwen3.5-9B-MLX-4bit, card says ~5.6 GB)
+# Windows/Linux: llama-server at http://127.0.0.1:8080/v1
+#   model gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL, 7.37 GB)
+#   fallback qwen3.5-9b (unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL, 5.97 GB)
+# provider = "omlx"
+# provider = "llama-server"
+# base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
-model = "gemma-4-12b-it"
-fallback_model = "qwen3.5-9b"
 polish = true
 # Both models support 256K. 16384 keeps the KV cache realistic on an iGPU.
 context_tokens = 16384
@@ -41,7 +45,20 @@ top_p = 0.95
 top_k = 64
 min_p = 0.0
 
+[llm.profiles."gemma-4-12B-it-4bit"]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+min_p = 0.0
+
 [llm.profiles."qwen3.5-9b"]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+
+[llm.profiles."Qwen3.5-9B-MLX-4bit"]
 temperature = 0.7
 top_p = 0.8
 top_k = 20

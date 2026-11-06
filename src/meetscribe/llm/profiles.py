@@ -1,4 +1,4 @@
-"""Per-model sampling. The loaded llama-server alias picks the profile."""
+"""Per-model sampling. The id from GET /v1/models picks the profile."""
 
 from __future__ import annotations
 

@@ -17,11 +17,15 @@ class ChatClient(Protocol):
 class OpenAIChatClient:
     """Chat completions against any server that speaks the OpenAI protocol.
 
-    ``base_url`` is the server root that already includes ``/v1``. The default
-    is llama.cpp's llama-server. The same client talks to any other
-    OpenAI-compatible server. llama-server ignores the model name in
-    single-model mode and does not require a key; pass a dummy when the
-    environment variable is unset. The key stays in memory.
+    ``base_url`` is the server root that already includes ``/v1``. Apple
+    Silicon defaults to oMLX at ``http://127.0.0.1:8000/v1``. Other machines
+    default to llama.cpp's llama-server at ``http://127.0.0.1:8080/v1``.
+    llama-server does not check a key. oMLX on a loopback bind can run
+    without one; if you set an oMLX API key, put it in the environment
+    variable. The client always sends a bearer, using the dummy value
+    ``llama-server`` when that variable is unset. The key stays in memory.
+    Thinking is turned off with ``chat_template_kwargs.enable_thinking``,
+    and any leftover reasoning text is stripped.
     """
 
     def __init__(
@@ -70,13 +74,13 @@ class OpenAIChatClient:
             }
             if self.presence_penalty is not None:
                 request["presence_penalty"] = self.presence_penalty
-            extra: dict[str, float | int] = {}
-            if self.top_k > 0:
-                extra["top_k"] = self.top_k
-            if self.min_p > 0:
-                extra["min_p"] = self.min_p
-            if extra:
-                request["extra_body"] = extra
+            extra: dict[str, object] = {
+                "top_k": self.top_k,
+                "min_p": self.min_p,
+                # oMLX and llama-server both honor this nested flag.
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            request["extra_body"] = extra
             response = client.chat.completions.create(**request)
         except Exception as exc:
             raise LlmError(f"LLM request to {self.base_url} failed: {exc}") from exc

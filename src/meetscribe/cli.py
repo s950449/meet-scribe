@@ -131,6 +131,10 @@ def transcribe(
         typer.Option("--speaker", "-s", help="Map a speaker id to a name, e.g. Me=林可安. Repeatable."),
     ] = None,
     base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
+    llm_provider: Annotated[
+        Optional[str],
+        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+    ] = None,
     llm_model: Annotated[
         Optional[str],
         typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
@@ -148,6 +152,7 @@ def transcribe(
             diarization_backend=diarization,
             language=language,
             llm_base_url=base_url,
+            llm_provider=llm_provider,
             llm_model=llm_model,
             llm_polish=False if no_polish else None,
             speaker_map=parse_speaker_map(speaker) if speaker else None,
@@ -188,6 +193,10 @@ def summarize(
         typer.Option("--speaker", "-s", help="Map a speaker id to a name. Repeatable."),
     ] = None,
     base_url: Annotated[Optional[str], typer.Option("--base-url", help="OpenAI-compatible API base URL.")] = None,
+    llm_provider: Annotated[
+        Optional[str],
+        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+    ] = None,
     llm_model: Annotated[
         Optional[str],
         typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
@@ -199,6 +208,7 @@ def summarize(
         config = _config(
             ctx,
             llm_base_url=base_url,
+            llm_provider=llm_provider,
             llm_model=llm_model,
             speaker_map=parse_speaker_map(speaker) if speaker else None,
         )
@@ -229,6 +239,10 @@ def run(
     speaker: Annotated[Optional[list[str]], typer.Option("--speaker", "-s")] = None,
     capture_backend: Annotated[Optional[str], typer.Option("--capture-backend")] = None,
     base_url: Annotated[Optional[str], typer.Option("--base-url")] = None,
+    llm_provider: Annotated[
+        Optional[str],
+        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+    ] = None,
     llm_model: Annotated[
         Optional[str],
         typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
@@ -251,6 +265,7 @@ def run(
             language=language,
             capture_backend=capture_backend,
             llm_base_url=base_url,
+            llm_provider=llm_provider,
             llm_model=llm_model,
             llm_polish=False if no_polish else None,
             speaker_map=parse_speaker_map(speaker) if speaker else None,
@@ -288,6 +303,10 @@ def devices() -> None:
 @app.command()
 def backends(
     ctx: typer.Context,
+    llm_provider: Annotated[
+        Optional[str],
+        typer.Option("--llm-provider", help="omlx or llama-server. Apple Silicon defaults to omlx."),
+    ] = None,
     llm_model: Annotated[
         Optional[str],
         typer.Option("--llm-model", help="Model alias. Overrides /v1/models and selects the sampling profile."),
@@ -297,7 +316,7 @@ def backends(
 
     hardware = detect_hardware()
     registry = build_registry()
-    config = _config(ctx, llm_model=llm_model)
+    config = _config(ctx, llm_provider=llm_provider, llm_model=llm_model)
     active = select_active_llm(config)
     sampling = active.sampling
     payload = {
@@ -313,6 +332,7 @@ def backends(
             "diarization": "track if two tracks else single-speaker",
         },
         "llm": {
+            "provider": config.llm.provider,
             "active_model": active.model,
             "source": active.source,
             "profile": active.profile,
@@ -381,6 +401,8 @@ def _format_backends(payload: dict) -> str:
         f"  diarization: {hardware['diarization']}",
         "",
         "LLM",
+        f"  provider: {payload['llm']['provider']}",
+        f"  base_url: {payload['llm']['base_url']}",
         f"  model: {payload['llm']['active_model']} ({payload['llm']['source']})",
         f"  profile: {payload['llm']['profile'] or 'built-in default'}",
         (

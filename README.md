@@ -146,6 +146,8 @@ src/meetscribe/
 
 Diarization `auto` uses `track` when both mic and system audio are present, and `single-speaker` for one mixed file. `--diarization pyannote` keeps the mic as `Me` and splits remote speakers on `system.wav`.
 
+The LLM follows the same split. Apple Silicon (macOS arm64) talks to [oMLX](https://github.com/jundot/omlx) at `http://127.0.0.1:8000/v1` and loads MLX weights. Windows and Linux talk to llama.cpp `llama-server` at `http://127.0.0.1:8080/v1` and load Unsloth GGUF. `--llm-provider omlx` or `--llm-provider llama-server` swaps that, and so does `[llm].provider`.
+
 Breeze-ASR-25 is a Transformers Whisper checkpoint. faster-whisper substitutes large-v3-turbo and says so. MLX uses a published conversion. GGML and OpenVINO need the scripts below.
 
 ## Model conversion
@@ -274,16 +276,22 @@ Secrets are read from the environment at call time. `api_key` and `hf_token` in 
 
 ```toml
 [llm]
-base_url = "http://127.0.0.1:8080/v1"
+# Leave provider unset to follow the machine: omlx on Apple Silicon, llama-server elsewhere.
+# provider = "omlx"          # http://127.0.0.1:8000/v1
+# provider = "llama-server"  # http://127.0.0.1:8080/v1
 api_key_env = "OPENAI_API_KEY"
-model = "gemma-4-12b-it"
-fallback_model = "qwen3.5-9b"
 polish = true
 context_tokens = 16384
 reserve_tokens = 2048
 # temperature = 0.2   # set under [llm] to override the matched profile
 
 [llm.profiles."gemma-4-12b-it"]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+min_p = 0.0
+
+[llm.profiles."gemma-4-12B-it-4bit"]
 temperature = 1.0
 top_p = 0.95
 top_k = 64
@@ -296,15 +304,64 @@ top_k = 20
 min_p = 0.0
 presence_penalty = 1.5
 
+[llm.profiles."Qwen3.5-9B-MLX-4bit"]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+
 [diarization]
 hf_token_env = "HF_TOKEN"
 ```
 
-`OPENAI_BASE_URL` still overrides `base_url` when you point at another OpenAI-compatible server (LM Studio, vLLM, or `https://api.openai.com/v1`). Set `OPENAI_API_KEY` for those servers. llama-server does not check a key; when the variable is unset the client sends the dummy value `llama-server`. In single-model mode llama-server also ignores the `model` field. `context_tokens` should be less than or equal to the server's `-c`. Transcripts that would exceed that budget, minus `reserve_tokens` and the system prompt, are polished and summarized in chunks, then the partial summaries are merged. Sampling comes from `[llm.profiles."<model>"]`. meetscribe asks `GET /v1/models` and uses the loaded alias when the server answers; otherwise it uses `model`. `--llm-model` skips that lookup. A sampling key written directly under `[llm]` replaces that one field from the profile.
+`OPENAI_BASE_URL` still overrides `base_url` when you point at another OpenAI-compatible server (LM Studio, vLLM, or `https://api.openai.com/v1`). Set `OPENAI_API_KEY` for those servers. llama-server does not check a key. oMLX on the default loopback bind can run without one; if you set `--api-key` or `OMLX_API_KEY`, put that value in `OPENAI_API_KEY`. When the variable is unset the client sends the dummy bearer `llama-server`. In single-model mode llama-server also ignores the `model` field. oMLX uses the model directory's leaf name (or an admin alias) as the id. `context_tokens` should be less than or equal to the server context. Transcripts that would exceed that budget, minus `reserve_tokens` and the system prompt, are polished and summarized in chunks, then the partial summaries are merged. Sampling comes from `[llm.profiles."<model>"]`. meetscribe asks `GET /v1/models` and uses the loaded alias when the server answers; otherwise it uses `model`. `--llm-model` skips that lookup. A sampling key written directly under `[llm]` replaces that one field from the profile. `--llm-provider` switches oMLX and llama-server, and retargets `base_url` and the default model ids unless you also set those.
 
 `transcribe` still skips the summary stage. Prompts ask for JSON, Traditional Chinese, and English technical terms kept in English. They live in `src/meetscribe/llm/prompts.py`.
 
-## llama-server
+## macOS: oMLX
+
+On Apple Silicon the default provider is **oMLX** ([jundot/omlx](https://github.com/jundot/omlx), Apache-2.0). It is an MLX server for macOS 15+ (Sequoia) and Apple Silicon, Python 3.11–3.13. The OpenAI-compatible API is `http://127.0.0.1:8000/v1` (`GET /v1/models`, `POST /v1/chat/completions`). The README also writes that base as `http://localhost:8000/v1`. Port 8000 is the zero-config default (`--port`, or `OMLX_PORT`); settings persist in `~/.omlx/settings.json`. The model directory default is `~/.omlx/models`. A non-loopback bind refuses to start without an API key.
+
+`python -m omlx.server` defaults `--host` to `0.0.0.0` in its argparse. Use `omlx start` or `omlx serve` for the documented client URL.
+
+Install (Homebrew). The oMLX README says Qwen3.5, GLM-5.2, and MiniMax M3 need the native kernels, and those need full Xcode. The official DMG already ships the kernels. Without them, those families fall back to a slower generic path.
+
+```bash
+brew tap jundot/omlx https://github.com/jundot/omlx
+brew install jundot/omlx/omlx --with-custom-kernel
+omlx start
+```
+
+From source: `git clone https://github.com/jundot/omlx.git && cd omlx && make install`, then `omlx serve --model-dir ~/.omlx/models`. `make install-no-kernels` skips the Metal kernels. A plain `pip install -e .` also skips them.
+
+No Unsloth MLX repo was found for Gemma 4 12B instruct or Qwen 3.5 9B. Unsloth publishes MLX 4-bit builds for other Gemma 4 sizes (E4B, 31B) and GGUF for these two. The MLX weights below are mlx-community 4-bit conversions. `mlx-community/gemma-4-12B-4bit` is the base checkpoint, not the instruct model, so it is not the default.
+
+| Role | Hugging Face repo | API id oMLX advertises | Quant | Size |
+| --- | --- | --- | --- | --- |
+| Default | [`mlx-community/gemma-4-12B-it-4bit`](https://huggingface.co/mlx-community/gemma-4-12B-it-4bit) | `gemma-4-12B-it-4bit` | 4-bit (`quantization_config.bits` is 4) | **6.77 GB** on the file listing (shards 5.35 GB and 1.39 GB) |
+| Fallback | [`mlx-community/Qwen3.5-9B-MLX-4bit`](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit) | `Qwen3.5-9B-MLX-4bit` | 4-bit, group size 64, mlx-vlm | Model card says **~5.6 GB**. The file listing shows shards of 5.35 GB and 600 MB; the listing page did not show a single total |
+
+oMLX's model id is the directory leaf, including in a two-level layout such as `mlx-community/gemma-4-12B-it-4bit`. An admin alias is also accepted. Sampling profiles match both the leaf name and the full repo id.
+
+```bash
+hf download mlx-community/gemma-4-12B-it-4bit \
+  --local-dir ~/.omlx/models/mlx-community/gemma-4-12B-it-4bit
+hf download mlx-community/Qwen3.5-9B-MLX-4bit \
+  --local-dir ~/.omlx/models/mlx-community/Qwen3.5-9B-MLX-4bit
+omlx restart
+curl -s http://127.0.0.1:8000/v1/models
+```
+
+The admin dashboard can download the same repos. meetscribe then calls `http://127.0.0.1:8000/v1/chat/completions`.
+
+Each request sends `temperature`, `top_p`, `presence_penalty` when the profile has one, and `extra_body` fields `top_k`, `min_p`, and `chat_template_kwargs.enable_thinking` set to the JSON boolean `false`. oMLX's `get_sampling_params` uses the request values unless that model (or the server) has force sampling turned on. The server merges `enable_thinking` from `chat_template_kwargs`. Its thinking detector treats a Qwen-style template (`enable_thinking is false`) as thinking by default, and a Gemma 4 template (`default(false)`) as thinking off by default. The client still strips `<think>` and `<|channel>thought` blocks. A per-model admin Force lock can ignore the request flag; leave Enable Thinking off for meeting notes.
+
+Gemma sampling stays temperature 1.0, top_p 0.95, top_k 64. Qwen non-thinking sampling stays temperature 0.7, top_p 0.8, top_k 20, min_p 0.0, presence_penalty 1.5. `meetscribe backends` prints the provider, the base URL, and the matched profile.
+
+To use GGUF on a Mac instead, start llama-server as in the Windows/Linux section and run `uv run meetscribe run --llm-provider llama-server meeting.wav`.
+
+## Windows and Linux: llama-server
 
 The default local model is **Gemma 4 12B** (instruct). When the machine cannot hold that GGUF plus the KV cache, switch the server to **Qwen 3.5 9B**. meetscribe does not swap models by itself: start `llama-server` with the file that fits, and keep `[llm].context_tokens` equal to `-c`.
 
@@ -333,21 +390,6 @@ cmake --build build --config Release -j
   --reasoning off \
   --temp 1.0 --top-p 0.95 --top-k 64 \
   -c 16384 --host 127.0.0.1 --port 8080 \
-  --alias gemma-4-12b-it
-```
-
-Metal (Apple Silicon). `GGML_METAL` is on by default in macOS builds; the flag is explicit here:
-
-```bash
-cmake -B build -DGGML_METAL=ON
-cmake --build build --config Release -j
-./build/bin/llama-server \
-  -hf unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL \
-  --no-mmproj --jinja \
-  --chat-template-kwargs '{"enable_thinking":false}' \
-  --reasoning off \
-  --temp 1.0 --top-p 0.95 --top-k 64 \
-  -c 16384 -ngl 99 --host 127.0.0.1 --port 8080 \
   --alias gemma-4-12b-it
 ```
 

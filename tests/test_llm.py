@@ -1,6 +1,8 @@
+import platform
+
 import pytest
 
-from meetscribe.config import AppConfig, apply_overrides
+from meetscribe.config import AppConfig, apply_overrides, llm_provider_for
 from meetscribe.errors import LlmError
 from meetscribe.llm.client import extract_json_object, strip_thinking
 from meetscribe.llm.budget import chunk_items, estimate_tokens
@@ -81,8 +83,9 @@ def test_factory_uses_llama_server_without_an_api_key(monkeypatch: pytest.Monkey
     assert isinstance(polisher, OpenAIPolisher)
     assert isinstance(summarizer, OpenAISummarizer)
     assert polisher.client.api_key == "llama-server"
-    assert polisher.client.base_url == "http://127.0.0.1:8080/v1"
-    assert polisher.client.model == "gemma-4-12b-it"
+    assert config.llm.provider == llm_provider_for(platform.system(), platform.machine())
+    assert polisher.client.base_url == config.llm.base_url
+    assert polisher.client.model == config.llm.model
     assert polisher.client.temperature == 1.0
     assert polisher.client.top_p == 0.95
     assert polisher.client.top_k == 64
@@ -119,6 +122,58 @@ def test_sampling_profile_follows_the_loaded_model() -> None:
     assert overridden.source == "config"
     assert overridden.sampling.temperature == 0.2
     assert overridden.sampling.top_k == 64
+
+    mlx_qwen = select_active_llm(config, detected="mlx-community/Qwen3.5-9B-MLX-4bit", probe=False)
+    assert mlx_qwen.profile == "mlx-community/Qwen3.5-9B-MLX-4bit"
+    assert mlx_qwen.sampling.presence_penalty == 1.5
+    mlx_gemma = select_active_llm(config, detected="gemma-4-12B-it-4bit", probe=False)
+    assert mlx_gemma.profile == "gemma-4-12B-it-4bit"
+    assert mlx_gemma.sampling.temperature == 1.0
+    assert mlx_gemma.sampling.top_k == 64
+    assert mlx_gemma.sampling.presence_penalty is None
+
+
+def test_request_disables_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
+    from meetscribe.llm.client import OpenAIChatClient
+
+    captured: dict[str, object] = {}
+
+    class _Message:
+        content = '{"overview": "好"}'
+
+    class _Choice:
+        message = _Message()
+
+    class _Response:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, **kwargs: object) -> _Response:
+            captured.update(kwargs)
+            return _Response()
+
+    class _Chat:
+        completions = _Completions()
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            self.chat = _Chat()
+
+    monkeypatch.setattr("openai.OpenAI", _Client)
+    text = OpenAIChatClient(
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="llama-server",
+        model="gemma-4-12B-it-4bit",
+        top_k=64,
+        min_p=0.0,
+    ).complete(system="系統", user="使用者")
+    assert text == '{"overview": "好"}'
+    extra = captured["extra_body"]
+    assert extra == {
+        "top_k": 64,
+        "min_p": 0.0,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
 
 
 def test_strip_thinking_blocks() -> None:
