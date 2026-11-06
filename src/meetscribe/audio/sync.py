@@ -18,8 +18,10 @@ from pathlib import Path
 
 import numpy as np
 
+from meetscribe.audio.control import RecordingControl
 from meetscribe.audio.io import resample_linear
-from meetscribe.types import AudioTrack, CaptureResult
+from meetscribe.events import stage_event
+from meetscribe.types import AudioTrack, CaptureResult, ProgressEvent
 
 ChunkCallback = Callable[[str, float, np.ndarray], None]
 
@@ -37,6 +39,9 @@ class SyncedWavSession:
     sample_rate: int = 48_000
     chunk_seconds: float = 0.0
     on_chunk: ChunkCallback | None = None
+    control: RecordingControl | None = None
+    _levels: dict[str, tuple[float, float, float]] = field(default_factory=dict, init=False)
+    _warned: dict[str, str] = field(default_factory=dict, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _t0: float | None = field(default=None, init=False)
     _stats: dict[str, TrackStats] = field(default_factory=dict, init=False)
@@ -51,8 +56,23 @@ class SyncedWavSession:
             mono = resample_linear(mono, source_rate, self.sample_rate)
         if mono.size == 0:
             return
+        if self.control is not None:
+            ranges = self.control.retained(host_time, host_time + mono.size / self.sample_rate)
+            for left, right, adjusted in ranges:
+                first = round((left - host_time) * self.sample_rate)
+                last = round((right - host_time) * self.sample_rate)
+                if last > first:
+                    self._write_active(track_id, adjusted, mono[first:last])
+            return
+        self._write_active(track_id, host_time, mono)
+
+    def _write_active(self, track_id: str, host_time: float, mono: np.ndarray) -> None:
         callbacks: list[tuple[str, float, np.ndarray]] = []
         with self._lock:
+            peak = float(np.max(np.abs(mono)))
+            active = self.control.elapsed() if self.control is not None else host_time
+            previous = self._levels.get(track_id, (0.0, active, 0.0))
+            self._levels[track_id] = (peak, active, active if peak >= 0.001 else previous[2])
             if self._t0 is None:
                 self._t0 = host_time
             origin = self._t0
@@ -78,6 +98,48 @@ class SyncedWavSession:
                 except Exception:
                     # Live transcription must not tear down the recording threads.
                     continue
+
+    def reset_monitor(self) -> None:
+        """Reset observations when the recording duration clock starts."""
+        with self._lock:
+            self._levels.clear()
+            self._warned.clear()
+
+    def monitor(self, track_ids: list[str], *, elapsed: float) -> list[ProgressEvent]:
+        """Snapshot levels on the control thread, with one warning per incident."""
+        events = []
+        with self._lock:
+            for track_id in track_ids:
+                peak, last, loud = self._levels.get(track_id, (0.0, 0.0, 0.0))
+                problem = (
+                    "missing"
+                    if elapsed - last >= 5.0
+                    else ("silent" if elapsed - loud >= 5.0 else "")
+                )
+                description = "no audio buffers" if problem == "missing" else "audio is silent"
+                if problem and self._warned.get(track_id) != problem:
+                    events.append(
+                        stage_event(
+                            "capture",
+                            "warning",
+                            track_id=track_id,
+                            message=f"{track_id}: {description} for 5s",
+                            reason=problem,
+                        )
+                    )
+                self._warned[track_id] = problem
+                visible_peak = peak if elapsed - last < 1.0 else 0.0
+                events.append(
+                    stage_event(
+                        "capture",
+                        "level",
+                        track_id=track_id,
+                        message=f"{track_id}: level {visible_peak:.3f}",
+                        peak=visible_peak,
+                        elapsed_s=round(elapsed, 1),
+                    )
+                )
+        return events
 
     def finish(self, started_at: datetime) -> CaptureResult:
         with self._lock:
@@ -178,6 +240,7 @@ class SyncedWavSession:
         self._stats[track_id].frames += int(samples.size)
 
     def _write_manifest_locked(self) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "sample_rate": self.sample_rate,
             "tracks": {
