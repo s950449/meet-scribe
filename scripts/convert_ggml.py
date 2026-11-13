@@ -8,8 +8,10 @@ GGML weights are published by ggerganov/whisper.cpp as ggml-large-v3-turbo.bin
 and can be dropped in ~/.cache/meetscribe/models/ without conversion.
 
     git clone https://github.com/ggml-org/whisper.cpp.git
+    git clone --depth 1 https://github.com/openai/whisper.git
     uv run --with huggingface_hub --with torch --with transformers \
-        python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp
+        python scripts/convert_ggml.py --convert --whisper-cpp whisper.cpp \
+        --whisper-repo whisper
 
 Vulkan runtime (separate from conversion):
 
@@ -43,6 +45,11 @@ def main() -> int:
         help="Checkout that contains models/convert-h5-to-ggml.py",
     )
     parser.add_argument(
+        "--whisper-repo",
+        default="",
+        help="openai/whisper checkout (the converter reads whisper/assets/mel_filters.npz)",
+    )
+    parser.add_argument(
         "--output",
         default="",
         help="Output .bin path. Default: ~/.cache/meetscribe/models/ggml-breeze-asr-25.bin",
@@ -58,11 +65,16 @@ def main() -> int:
     if checkout is None or not (checkout / "models" / "convert-h5-to-ggml.py").is_file():
         print("Pass --whisper-cpp pointing at a whisper.cpp checkout.", file=sys.stderr)
         return 1
+    whisper_repo = Path(args.whisper_repo).expanduser() if args.whisper_repo else None
+    if whisper_repo is None or not (whisper_repo / "whisper" / "assets").is_dir():
+        print("Pass --whisper-repo pointing at an openai/whisper checkout.", file=sys.stderr)
+        return 1
     snapshot = _download(args.model)
     command = [
         sys.executable,
         str(checkout / "models" / "convert-h5-to-ggml.py"),
         str(snapshot),
+        str(whisper_repo),
         str(checkout / "models"),
     ]
     completed = subprocess.run(command, check=False)
@@ -90,7 +102,11 @@ def _download(model: str) -> Path:
         raise SystemExit(
             "uv run --with huggingface_hub python scripts/convert_ggml.py --convert"
         ) from exc
-    path = snapshot_download(model)
+    # Skip training state (optimizer, scheduler, random_states_*.pkl): ~15 GB for Breeze.
+    path = snapshot_download(
+        model,
+        allow_patterns=["*.json", "*.txt", "model*.safetensors", "pytorch_model*.bin"],
+    )
     return Path(path)
 
 
