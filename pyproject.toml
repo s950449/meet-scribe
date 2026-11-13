@@ -24,6 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=1.20,<2"]
 faster-whisper = ["faster-whisper>=1.0.3"]
 vulkan = ["pywhispercpp>=1.2.0"]
 whisper-cpp = ["pywhispercpp>=1.2.0"]

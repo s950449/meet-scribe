@@ -39,6 +39,7 @@ hf_token_env = "HF_TOKEN"
 # base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
 polish = true
+# polish_mode = "agent" # llm (default) | agent (external agent) | none (raw only)
 # Both models support 256K. 16384 keeps the KV cache realistic on an iGPU.
 context_tokens = 16384
 reserve_tokens = 2048

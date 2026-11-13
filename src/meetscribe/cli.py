@@ -174,6 +174,13 @@ def transcribe(
             help="Model alias. Overrides /v1/models and selects the sampling profile.",
         ),
     ] = None,
+    polish_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--polish-mode",
+            help="llm, agent (external agent), or none; agent/none skip summary too.",
+        ),
+    ] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish", help="Keep the raw ASR text.")] = False,
     keep_audio: Annotated[
         bool, typer.Option("--keep-audio", help="Keep the 16 kHz wavs next to the note.")
@@ -198,6 +205,7 @@ def transcribe(
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_polish=False if no_polish else None,
+            polish_mode=polish_mode,
             speaker_map=parse_speaker_map(speaker) if speaker else None,
         )
         result = run_meeting(
@@ -307,6 +315,13 @@ def run(
             help="Model alias. Overrides /v1/models and selects the sampling profile.",
         ),
     ] = None,
+    polish_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--polish-mode",
+            help="llm, agent (external agent), or none; agent/none skip summary too.",
+        ),
+    ] = None,
     no_polish: Annotated[bool, typer.Option("--no-polish")] = False,
     keep_audio: Annotated[bool, typer.Option("--keep-audio")] = False,
     live: Annotated[
@@ -347,6 +362,7 @@ def run(
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_polish=False if no_polish else None,
+            polish_mode=polish_mode,
             speaker_map=parse_speaker_map(speaker) if speaker else None,
             mic_device=mic_device,
             system_device=system_device,
@@ -669,3 +685,45 @@ def _device_report() -> str:
         return "\n".join(lines)
     lines.append("  No capture backend for this operating system. Transcribe existing wav files.")
     return "\n".join(lines)
+
+
+@app.command("mcp")
+def mcp_command(
+    ctx: typer.Context,
+    output_dir: Annotated[
+        Path | None, typer.Option("--output-dir", help="MCP job storage.")
+    ] = None,
+) -> None:
+    """Serve local ASR tools to Codex/Claude over MCP stdio."""
+    from meetscribe.mcp_server import serve
+
+    try:
+        config = _config(ctx)
+        serve(output_dir or config.output_dir / ".meetscribe-mcp", ctx.obj.get("config_path"))
+    except MeetscribeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+@app.command("apply-agent")
+def apply_agent(
+    ctx: typer.Context,
+    source: Annotated[Path, typer.Argument(help="Original transcript JSON.")],
+    revision: Annotated[Path, typer.Argument(help="Agent JSON: source_revision, edits, summary.")],
+) -> None:
+    """Validate and save an agent's edits separately from the original transcript."""
+    from meetscribe.agent import save_revision
+
+    def action(sink: StdioSink) -> None:
+        try:
+            body = json.loads(revision.read_text(encoding="utf-8"))
+            if not isinstance(body, dict) or not isinstance(body.get("edits"), dict):
+                raise ValueError("Expected an object with an edits mapping")
+            result = save_revision(
+                source, body.get("source_revision", ""), body["edits"], body.get("summary")
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            raise MeetscribeError(f"Invalid agent revision: {exc}") from exc
+        sink.emit(ProgressEvent(stage="agent", event="log", message=json.dumps(result)))
+
+    _guard(ctx, action)

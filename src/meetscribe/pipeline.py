@@ -220,7 +220,11 @@ def run_meeting(
         document = MeetingDocument(
             title=meeting_title,
             started_at=captured.started_at,
-            summary=MeetingSummary(overview=PENDING_SUMMARY),
+            summary=MeetingSummary(
+                overview="（等待外部 agent 潤飾與摘要。）"
+                if config.llm.polish_mode == "agent"
+                else PENDING_SUMMARY
+            ),
             utterances=tuple(utterances),
             speaker_map=dict(config.speaker_map),
         )
@@ -232,6 +236,21 @@ def run_meeting(
             for target in output_paths
         ):
             raise AudioError("Output would overwrite source audio. Choose another --output.")
+        if config.llm.polish_mode in {"agent", "none"}:
+            result = _write(document, destination, events)
+            if config.llm.polish_mode == "agent":
+                from meetscribe.agent import agent_payload
+
+                handoff = result.json_path.with_suffix(".agent.json")
+                atomic_text(
+                    handoff,
+                    json.dumps(agent_payload(result.json_path), ensure_ascii=False, indent=2)
+                    + "\n",
+                )
+                events.emit(log_event("agent", f"Agent handoff: {handoff}", handoff=str(handoff)))
+            if keep_audio:
+                _keep_audio(scratch / "audio", result.markdown_path)
+            return result
         _write(document, destination, events)
         llm_config = asdict(config.llm)
         llm_config.pop("api_key_env", None)

@@ -50,3 +50,6 @@ htmlcov/
 *.wav
 .meetscribe-work/
 *.md.work/
+
+# Private MCP jobs and transcripts
+.meetscribe-mcp/
