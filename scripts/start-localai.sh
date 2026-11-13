@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Foreground LocalAI (Intel SYCL image) serving Gemma 4 12B and Breeze-ASR-25.
 # Published on 127.0.0.1:8080 only. Stop with Ctrl+C.
+# Uploads are whole 16 kHz mono tracks (~115 MB per hour); LocalAI's default
+# 15 MB limit rejects anything over ~7.8 minutes, so it is raised to 2048 MB.
 #
 # Reuses the backends volume of the existing local-ai-intel container, which
 # holds intel-sycl-f16-llama-cpp and intel-sycl-f16-whisper. Install a missing
@@ -28,6 +30,7 @@ exec docker run --rm "${tty[@]}" --name meetscribe-localai \
   -e ZES_ENABLE_SYSMAN=1 \
   -e LOCALAI_SINGLE_ACTIVE_BACKEND="${LOCALAI_SINGLE_ACTIVE_BACKEND:-false}" \
   -e LOCALAI_DISABLE_WEBUI=true \
+  -e LOCALAI_UPLOAD_LIMIT="${LOCALAI_UPLOAD_LIMIT:-2048}" \
   "${sycl_env[@]}" \
   -v local-ai-intel-backends:/backends \
   -v "$models:/models:ro" \
