@@ -145,6 +145,18 @@ def _asr_specs() -> list[BackendSpec]:
             extra="whisper-cpp",
             platforms=("linux", "windows", "darwin"),
         ),
+        BackendSpec(
+            kind="asr",
+            name="openai-api",
+            description=(
+                "OpenAI-compatible /v1/audio/transcriptions server, e.g. LocalAI "
+                "with SYCL whisper.cpp (scripts/start-localai.sh)."
+            ),
+            device="server",
+            implemented=True,
+            factory=_openai_api,
+            platforms=("any",),
+        ),
     ]
 
 
@@ -306,6 +318,16 @@ def _whisper_cpp(config: AppConfig) -> object:
         model_dir=_model_dir(config),
         whisper_cpp_bin=config.asr.whisper_cpp_bin,
         backend_name="whisper.cpp",
+    )
+
+
+def _openai_api(config: AppConfig) -> object:
+    from meetscribe.asr.openai_api import OpenAIApiWhisperAsr
+
+    return OpenAIApiWhisperAsr(
+        model=config.asr.model,
+        language=config.asr.language,
+        server_url=config.asr.server_url,
     )
 
 

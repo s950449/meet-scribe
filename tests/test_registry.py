@@ -41,6 +41,7 @@ def test_registry_lists_planned_backends() -> None:
         "openvino",
         "vulkan",
         "whisper.cpp",
+        "openai-api",
     ]
     assert registry.names("diarization") == ["track", "single-speaker", "pyannote", "sherpa-onnx"]
     assert registry.names("capture") == ["file", "macos", "windows", "linux"]
@@ -51,6 +52,7 @@ def test_registry_lists_planned_backends() -> None:
         "openvino",
         "vulkan",
         "whisper.cpp",
+        "openai-api",
         "pyannote",
         "track",
         "single-speaker",

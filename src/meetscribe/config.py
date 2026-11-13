@@ -43,6 +43,7 @@ class AsrSettings:
     openvino_device: str = "auto"
     model_dir: str = ""
     whisper_cpp_bin: str = ""
+    server_url: str = ""
 
 
 @dataclass
@@ -253,6 +254,8 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
         asr = replace(asr, model_dir=str(overrides["model_dir"]))
     if "whisper_cpp_bin" in overrides and overrides["whisper_cpp_bin"] is not None:
         asr = replace(asr, whisper_cpp_bin=str(overrides["whisper_cpp_bin"]))
+    if "asr_server_url" in overrides and overrides["asr_server_url"] is not None:
+        asr = replace(asr, server_url=str(overrides["asr_server_url"]))
     if "diarization_backend" in overrides and overrides["diarization_backend"] is not None:
         diar = replace(diar, backend=str(overrides["diarization_backend"]))
     if "llm_provider" in overrides and overrides["llm_provider"] is not None:
@@ -394,6 +397,8 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         asr = replace(asr, model_dir=str(asr_table["model_dir"]))
     if "whisper_cpp_bin" in asr_table:
         asr = replace(asr, whisper_cpp_bin=str(asr_table["whisper_cpp_bin"]))
+    if "server_url" in asr_table:
+        asr = replace(asr, server_url=str(asr_table["server_url"]))
 
     diar_table = _table(data.get("diarization"), "diarization")
     if "backend" in diar_table:
@@ -498,6 +503,8 @@ def _apply_env(config: AppConfig, env: Mapping[str, str]) -> AppConfig:
         overrides["model_dir"] = env["MEETSCRIBE_MODEL_DIR"]
     if env.get("MEETSCRIBE_WHISPER_CPP"):
         overrides["whisper_cpp_bin"] = env["MEETSCRIBE_WHISPER_CPP"]
+    if env.get("MEETSCRIBE_ASR_URL"):
+        overrides["asr_server_url"] = env["MEETSCRIBE_ASR_URL"]
     if env.get("MEETSCRIBE_OPENVINO_DEVICE"):
         overrides["openvino_device"] = env["MEETSCRIBE_OPENVINO_DEVICE"]
     if env.get("MEETSCRIBE_MIC_DEVICE"):

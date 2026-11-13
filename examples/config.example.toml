@@ -7,7 +7,7 @@
 output_dir = "~/Meetings"
 
 [asr]
-backend = "auto" # auto | faster-whisper | mlx-whisper | openvino | vulkan | whisper.cpp
+backend = "auto" # auto | faster-whisper | mlx-whisper | openvino | vulkan | whisper.cpp | openai-api
 model = "MediaTek-Research/Breeze-ASR-25"
 fallback_model = "openai/whisper-large-v3-turbo"
 language = "zh"
@@ -15,6 +15,8 @@ device = "auto"
 openvino_device = "auto" # auto | GPU | CPU
 # model_dir = "~/.cache/meetscribe/models"
 # whisper_cpp_bin = "" # or set MEETSCRIBE_WHISPER_CPP
+# openai-api: model is the server's model id (e.g. "breeze-asr-25" in LocalAI)
+# server_url = "http://127.0.0.1:8080/v1" # or set MEETSCRIBE_ASR_URL
 
 [diarization]
 backend = "auto" # auto | track | single-speaker | pyannote | sherpa-onnx
