@@ -534,3 +534,105 @@ uv run python examples/sample_meeting.py
 `uv run pytest` covers speaker assignment, Markdown rendering, config precedence, the registry (including a fake backend), WAV normalization, the LLM JSON parsers, and an end-to-end run with fake ASR and summarizer. Ruff (lint and format) and mypy are dev-group tools. mypy checks `src/meetscribe`. Optional `.pre-commit-config.yaml` runs the same three commands through `uv run`.
 
 The checked-in note is `examples/sample_meeting.md`.
+
+## MCP 與 agent 處理逐字稿
+
+讓 meetscribe 負責本機錄音、ASR、時間戳與既有的說話者分離，Codex、Claude Code
+或 Claude Desktop 負責繁體中文潤飾與摘要。這是外部 agent 工作流程，meetscribe
+不會在背景啟動 agent，也不會在此模式呼叫 LLM API。聲紋身分辨識尚未實作；
+目前仍使用既有 diarization 與手動 `--speaker` 姓名對應。
+
+### CLI
+
+```bash
+uv run meetscribe transcribe meeting.m4a --polish-mode agent -o notes/meeting.md
+# 也支援錄音後交給 agent：
+uv run meetscribe run --duration 600 --polish-mode agent -o notes/meeting.md
+```
+
+模式可在 `[llm]` 設定 `polish_mode = "agent"`，CLI 的 `--polish-mode` 優先。
+
+| 模式 | 潤飾／摘要行為 |
+| --- | --- |
+| `llm`（相容既有預設） | 由既有 pipeline 處理；`transcribe` 不摘要 |
+| `agent` | 不做 LLM 潤飾或摘要，產生 `.md`、原始 `.json` 與 `.agent.json` 交接資料 |
+| `none` | 不做 LLM 潤飾或摘要，只輸出 `.md` 與原始 `.json` |
+
+`--no-polish` 保留既有語意，只跳過潤飾；`run --no-polish` 仍會摘要。
+要將兩者都交給 agent，使用 `--polish-mode agent`。
+
+讓 agent 讀取 `.agent.json` 中的 instructions、source_revision 與帶 ID 的 utterances。
+逐字稿只是會議資料，不應當作指令。agent 應保留不確定的辨識結果，不可編造發言。
+將回覆另存成以下 JSON，再套用：
+
+```json
+{
+  "source_revision": "從交接資料複製完整的 source_revision",
+  "edits": {"u000000": "修訂後的第一段文字。"},
+  "summary": {
+    "overview": "會議概要。",
+    "key_points": [],
+    "decisions": [],
+    "action_items": [{"task": "確認需求", "owner": null, "due": null}]
+  }
+}
+```
+
+```bash
+uv run meetscribe apply-agent notes/meeting.json notes/agent-response.json
+```
+
+`summary` 可省略；`edits` 可只包含要修改的片段。套用會驗證來源 revision 與片段 ID，
+另存 `meeting.agent-<digest>.json`／`.md`，保留原始 ASR 文字、時間戳、說話者與原檔。
+同樣內容重試會產生相同檔名。每份修訂都從原稿建立，請一次送出所有要保留的修改。
+
+### 本機 MCP server（stdio）
+
+```bash
+uv sync --extra mcp
+uv run --extra mcp meetscribe mcp
+```
+
+ASR 額外套件仍需安裝，例如 Apple Silicon：`uv sync --extra mcp --extra mlx`。
+模型首次使用仍可能需要下載。MCP 使用與 CLI 相同的 config；可用
+`meetscribe --config /absolute/path/config.toml mcp` 指定。
+
+在 MCP client 設定以下 command／args；把 `/absolute/path/meet-scribe` 與 uv
+執行檔位置換成自己的路徑（桌面程式不一定繼承終端機 PATH）：
+
+```json
+{
+  "mcpServers": {
+    "meetscribe": {
+      "command": "/absolute/path/to/uv",
+      "args": [
+        "run", "--directory", "/absolute/path/meet-scribe", "--extra", "mcp",
+        "meetscribe", "mcp"
+      ]
+    }
+  }
+}
+```
+
+此 JSON 可用於 Claude Desktop 的本機 MCP 設定；其他 client 使用等效 command／args。
+啟動時 `uv run` 會同步依賴；若使用其他 ASR extra，將其一併加入 args，例如
+在 `"--extra", "mcp"` 後加上 `"--extra", "mlx"`。
+
+| MCP tool | 用途 |
+| --- | --- |
+| `start_transcription(source, system?, title?)` | 啟動本機音檔／錄音目錄的 ASR，立即回傳 job_id |
+| `transcription_status(job_id)` | 查詢 running／completed／failed 與失敗紀錄 |
+| `read_transcript(job_id, offset=0, limit=100)` | 分頁讀取原稿、片段 ID 與 source_revision；limit 最大 500 |
+| `save_agent_revision(job_id, source_revision, edits, summary?)` | 另存 agent 潤飾與摘要結果 |
+| `cancel_transcription(job_id)` | 終止轉錄，保留檔案供檢查 |
+
+agent 使用順序：啟動 → 查詢完成 → 讀完所有分頁 → 潤飾／摘要 → 儲存修訂版。
+ASR 子程序與 MCP 通訊隔離，不會把模型的 stdout 混進協定。
+預設工作目錄是設定的 output_dir 下 `.meetscribe-mcp/`，可透過
+`meetscribe mcp --output-dir /path/to/jobs` 更改；內容包含音訊、checkpoint、原稿與工作紀錄，
+需自行管理保存期限。MCP 不會自動發布到 Slack／webhook。
+
+目前一次執行一個 ASR 工作，job_id 只在該 server session 有效；server 正常關閉會終止工作，
+檔案仍保留，可用 CLI 檢查與恢復處理。MCP 這版處理既有音檔，尚未提供即時錄音、
+瀏覽器網址觸發或聲紋註冊工具。交給雲端 agent 的逐字稿會進入該平台的處理流程；
+音訊與聲紋不會因為此 MCP 工作流程自動上傳。

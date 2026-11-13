@@ -138,6 +138,7 @@ class LlmSettings:
     fallback_model: str = field(default_factory=lambda: provider_defaults(_current_provider())[2])
     base_url_explicit: bool = False
     polish: bool = True
+    polish_mode: str = "llm"
     # Practical KV-cache size for an iGPU. Both suggested models natively
     # support 256K; raise this together with llama-server -c when memory allows.
     context_tokens: int = 16384
@@ -326,6 +327,8 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
             model_locked=True,
             model_explicit=True,
         )
+    if overrides.get("polish_mode") is not None:
+        llm = replace(llm, polish_mode=_polish_mode(overrides["polish_mode"]))
     if "llm_polish" in overrides and overrides["llm_polish"] is not None:
         llm = replace(llm, polish=bool(overrides["llm_polish"]))
     if "context_tokens" in overrides and overrides["context_tokens"] is not None:
@@ -478,6 +481,8 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         llm = replace(llm, model=str(llm_table["model"]), model_explicit=True)
     if "fallback_model" in llm_table:
         llm = replace(llm, fallback_model=str(llm_table["fallback_model"]))
+    if "polish_mode" in llm_table:
+        llm = replace(llm, polish_mode=_polish_mode(llm_table["polish_mode"]))
     if "polish" in llm_table:
         polish = llm_table["polish"]
         if not isinstance(polish, bool):
@@ -695,3 +700,9 @@ def _reject_secrets(data: Mapping[str, object]) -> None:
             )
     if SECRET_KEYS.intersection(data):
         raise ConfigError("Do not put secrets in config.toml. Set them in the environment.")
+
+
+def _polish_mode(value: object) -> str:
+    if value not in ("llm", "agent", "none"):
+        raise ConfigError("polish_mode must be llm, agent, or none")
+    return str(value)
