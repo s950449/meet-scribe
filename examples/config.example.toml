@@ -30,14 +30,19 @@ hf_token_env = "HF_TOKEN"
 # Windows/Linux: llama-server at http://127.0.0.1:8080/v1
 #   model gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL, 7.37 GB)
 #   fallback qwen3.5-9b (unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL, 5.97 GB)
+# Hosted OpenAI-compatible API: transcript text leaves the machine.
+#   provider = "openai-compatible", plus base_url, model, and api_key_env.
+#   Only sampling fields set here are sent; llama.cpp extras are not.
 # provider = "omlx"
 # provider = "llama-server"
+# provider = "openai-compatible"
 # base_url = "http://127.0.0.1:8080/v1"
 api_key_env = "OPENAI_API_KEY"
 polish = true
 # Both models support 256K. 16384 keeps the KV cache realistic on an iGPU.
 context_tokens = 16384
 reserve_tokens = 2048
+timeout = 600 # seconds per request; covers a cold model load on the first call
 # Uncomment to override every profile:
 # temperature = 0.2
 
@@ -78,3 +83,13 @@ chunk_seconds = 5.0
 # Me = "林可安"
 # Remote = "客戶"
 # SPEAKER_00 = "陳怡君"
+
+[publish]
+# kind = "slack": Slack Web API with a bot token (deploy/slack/manifest.yaml).
+# kind = "webhook": POST to a webhook such as the n8n flow in deploy/n8n/.
+kind = "slack"
+auto = false # true: publish at the end of `meetscribe run`
+# slack_targets = ["C0123ABCD"] # channel IDs; user IDs (U…) get a DM
+slack_token_env = "SLACK_BOT_TOKEN" # xoxb-… token, from the environment only
+# url = "https://YOUR-TEAM.app.n8n.cloud/webhook/meetscribe" # or MEETSCRIBE_PUBLISH_URL
+token_env = "MEETSCRIBE_PUBLISH_TOKEN" # webhook secret, sent as X-Meetscribe-Token

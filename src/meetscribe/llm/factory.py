@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from meetscribe.config import AppConfig
+from meetscribe.config import AppConfig, is_local_provider
 from meetscribe.llm.budget import content_budget
 from meetscribe.llm.client import OpenAIChatClient
 from meetscribe.llm.polisher import IdentityPolisher, OpenAIPolisher
@@ -35,9 +35,25 @@ def build_summarizer(
 def _client(config: AppConfig, environ: Mapping[str, str] | None) -> OpenAIChatClient:
     api_key = config.resolved_api_key(environ)
     active = select_active_llm(config, api_key=api_key)
+    settings = config.llm
+    if not is_local_provider(settings.provider):
+        # Hosted API: send only the sampling fields set in config; retry 429/5xx.
+        return OpenAIChatClient(
+            base_url=settings.base_url,
+            api_key=api_key,
+            model=active.model,
+            temperature=settings.temperature,
+            top_p=settings.top_p,
+            top_k=None,
+            min_p=None,
+            presence_penalty=settings.presence_penalty,
+            timeout=settings.timeout,
+            local_extras=False,
+            max_retries=2,
+        )
     sampling = active.sampling
     return OpenAIChatClient(
-        base_url=config.llm.base_url,
+        base_url=settings.base_url,
         api_key=api_key,
         model=active.model,
         temperature=sampling.temperature,
@@ -45,6 +61,7 @@ def _client(config: AppConfig, environ: Mapping[str, str] | None) -> OpenAIChatC
         top_k=sampling.top_k,
         min_p=sampling.min_p,
         presence_penalty=sampling.presence_penalty,
+        timeout=settings.timeout,
     )
 
 

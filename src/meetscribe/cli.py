@@ -11,13 +11,14 @@ import typer
 
 from meetscribe import __version__
 from meetscribe.audio.devices import parse_pactl_short
-from meetscribe.config import AppConfig, load_config, parse_speaker_map
+from meetscribe.config import AppConfig, is_local_provider, load_config, parse_speaker_map
 from meetscribe.errors import MeetscribeError
 from meetscribe.events import ProgressEvent, StdioSink
 from meetscribe.hardware import detect_hardware, recommended_asr, recommended_capture
 from meetscribe.llm.profiles import select_active_llm
 from meetscribe.pipeline import record_audio, run_meeting, summarize_file
 from meetscribe.probe import describe_backend
+from meetscribe.publish import flush_outbox, pending, publish_note
 from meetscribe.registry import build_registry
 
 app = typer.Typer(
@@ -320,6 +321,13 @@ def run(
     resume: Annotated[
         bool, typer.Option("--resume", help="Continue from compatible completed stages.")
     ] = False,
+    publish: Annotated[
+        bool | None,
+        typer.Option(
+            "--publish/--no-publish",
+            help="Send the finished note to [publish].url. Default: [publish].auto.",
+        ),
+    ] = None,
 ) -> None:
     """Record or load audio, then transcribe, polish, and summarize."""
 
@@ -349,7 +357,7 @@ def run(
             directory = output_dir or Path("recording")
             record_audio(config, directory, duration_s=duration, live=live, sink=sink)
             mic = directory
-        run_meeting(
+        result = run_meeting(
             config,
             mic=mic,
             system=system,
@@ -362,8 +370,78 @@ def run(
             work_dir=work_dir,
             resume=resume,
         )
+        if config.publish.auto if publish is None else publish:
+            _publish(config, result.markdown_path, result.json_path, sink, strict=False)
 
     _guard(ctx, action)
+
+
+@app.command("publish")
+def publish_command(
+    ctx: typer.Context,
+    note: Annotated[
+        Path | None,
+        typer.Argument(help="Meeting Markdown written by run. Its .json sidecar is read too."),
+    ] = None,
+    sidecar: Annotated[
+        Path | None, typer.Option("--json", help="Sidecar path if it is not beside the note.")
+    ] = None,
+    flush: Annotated[
+        bool, typer.Option("--flush", help="Resend notes queued while the webhook was down.")
+    ] = False,
+) -> None:
+    """Send a finished note to the [publish].url webhook (e.g. n8n -> Slack)."""
+
+    def action(sink: StdioSink) -> None:
+        config = _config(ctx)
+        if note is None and not flush:
+            raise MeetscribeError("Pass a meeting .md file, or --flush to resend queued notes.")
+        if note is not None:
+            _publish(config, note, sidecar, sink)
+        if flush:
+            sent, errors = flush_outbox(config)
+            sink.emit(
+                ProgressEvent(stage="publish", event="log", message=f"Resent {sent} queued note(s)")
+            )
+            if errors:
+                raise MeetscribeError("Still queued:\n  " + "\n  ".join(errors))
+
+    _guard(ctx, action)
+
+
+def _publish(
+    config: AppConfig,
+    note: Path,
+    sidecar: Path | None,
+    sink: StdioSink,
+    *,
+    strict: bool = True,
+) -> None:
+    try:
+        outcome = publish_note(config, note, json_path=sidecar)
+    except MeetscribeError as exc:
+        if strict:
+            raise
+        sink.emit(ProgressEvent(stage="publish", event="log", status="warning", message=str(exc)))
+        return
+    if outcome.sent:
+        sink.emit(ProgressEvent(stage="publish", event="log", message=f"Published {note.name}"))
+        queued = len(pending())
+        if queued:
+            sink.emit(
+                ProgressEvent(
+                    stage="publish",
+                    event="log",
+                    message=f"{queued} older note(s) still queued; run meetscribe publish --flush",
+                )
+            )
+        return
+    message = (
+        f"{outcome.error}. Queued at {outcome.queued}; resend with meetscribe publish --flush."
+    )
+    if strict:
+        raise MeetscribeError(message)
+    sink.emit(ProgressEvent(stage="publish", event="log", status="warning", message=message))
 
 
 @app.command()
@@ -395,8 +473,6 @@ def backends(
     hardware = detect_hardware()
     registry = build_registry()
     config = _config(ctx, llm_provider=llm_provider, llm_model=llm_model)
-    active = select_active_llm(config)
-    sampling = active.sampling
     payload = {
         "hardware": {
             "system": hardware.system,
@@ -409,20 +485,7 @@ def backends(
             "vulkan_gpu": hardware.vulkan_gpu,
             "diarization": "track if two tracks else single-speaker",
         },
-        "llm": {
-            "provider": config.llm.provider,
-            "active_model": active.model,
-            "source": active.source,
-            "profile": active.profile,
-            "base_url": config.llm.base_url,
-            "sampling": {
-                "temperature": sampling.temperature,
-                "top_p": sampling.top_p,
-                "top_k": sampling.top_k,
-                "min_p": sampling.min_p,
-                "presence_penalty": sampling.presence_penalty,
-            },
-        },
+        "llm": _llm_info(config),
         "backends": [
             {
                 "kind": spec.kind,
@@ -447,6 +510,42 @@ def backends(
     typer.echo(_format_backends(payload))
 
 
+def _llm_info(config: AppConfig) -> dict[str, object]:
+    info: dict[str, object] = {
+        "provider": config.llm.provider,
+        "base_url": config.llm.base_url,
+    }
+    try:
+        active = select_active_llm(config)
+    except MeetscribeError as exc:
+        # Keep listing hardware and ASR backends; report the LLM problem instead.
+        info["error"] = str(exc)
+        return info
+    sampling = active.sampling
+    info.update(
+        active_model=active.model,
+        source=active.source,
+        profile=active.profile,
+        sampling=(
+            {
+                "temperature": sampling.temperature,
+                "top_p": sampling.top_p,
+                "top_k": sampling.top_k,
+                "min_p": sampling.min_p,
+                "presence_penalty": sampling.presence_penalty,
+            }
+            if is_local_provider(config.llm.provider)
+            else {
+                # Hosted APIs get only the fields set in config.
+                "temperature": config.llm.temperature,
+                "top_p": config.llm.top_p,
+                "presence_penalty": config.llm.presence_penalty,
+            }
+        ),
+    )
+    return info
+
+
 def _config(ctx: typer.Context, **overrides: object) -> AppConfig:
     cleaned = {key: value for key, value in overrides.items() if value is not None}
     return load_config(ctx.obj.get("config_path"), overrides=cleaned)
@@ -465,7 +564,7 @@ def _format_backends(payload: dict) -> str:
     hardware = payload["hardware"]
     igpu = hardware["intel_igpu"]
     igpu_text = "unknown" if igpu is None else ("yes" if igpu else "no")
-    sampling = payload["llm"]["sampling"]
+    llm = payload["llm"]
     lines = [
         "Hardware",
         f"  system: {hardware['system']}",
@@ -479,17 +578,21 @@ def _format_backends(payload: dict) -> str:
         f"  diarization: {hardware['diarization']}",
         "",
         "LLM",
-        f"  provider: {payload['llm']['provider']}",
-        f"  base_url: {payload['llm']['base_url']}",
-        f"  model: {payload['llm']['active_model']} ({payload['llm']['source']})",
-        f"  profile: {payload['llm']['profile'] or 'built-in default'}",
-        (
-            "  sampling: "
-            f"temperature={sampling['temperature']} top_p={sampling['top_p']} "
-            f"top_k={sampling['top_k']} min_p={sampling['min_p']} "
-            f"presence_penalty={sampling['presence_penalty']}"
-        ),
+        f"  provider: {llm['provider']}",
+        f"  base_url: {llm['base_url'] or '(not set)'}",
     ]
+    if "error" in llm:
+        lines.append(f"  error: {llm['error']}")
+    else:
+        sampling = " ".join(
+            f"{key}={'server default' if value is None else value}"
+            for key, value in llm["sampling"].items()
+        )
+        lines += [
+            f"  model: {llm['active_model']} ({llm['source']})",
+            f"  profile: {llm['profile'] or 'built-in default'}",
+            f"  sampling: {sampling}",
+        ]
     current = None
     for spec in payload["backends"]:
         if spec["kind"] != current:

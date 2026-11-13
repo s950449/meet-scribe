@@ -35,11 +35,13 @@ class OpenAIChatClient:
         api_key: str,
         model: str,
         timeout: float = 120.0,
-        temperature: float = 1.0,
-        top_p: float = 0.95,
-        top_k: int = 64,
-        min_p: float = 0.0,
+        temperature: float | None = 1.0,
+        top_p: float | None = 0.95,
+        top_k: int | None = 64,
+        min_p: float | None = 0.0,
         presence_penalty: float | None = None,
+        local_extras: bool = True,
+        max_retries: int = 0,
     ) -> None:
         self.base_url = base_url
         self.api_key = api_key
@@ -50,6 +52,10 @@ class OpenAIChatClient:
         self.top_k = top_k
         self.min_p = min_p
         self.presence_penalty = presence_penalty
+        # top_k, min_p, and chat_template_kwargs are llama.cpp/oMLX extensions.
+        # Hosted APIs often reject unknown fields, so they are sent only locally.
+        self.local_extras = local_extras
+        self.max_retries = max_retries
 
     def complete(self, *, system: str, user: str) -> str:
         try:
@@ -60,25 +66,33 @@ class OpenAIChatClient:
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=self.timeout,
-            max_retries=0,
+            max_retries=self.max_retries,
         )
+        request: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        if self.temperature is not None:
+            request["temperature"] = self.temperature
+        if self.top_p is not None:
+            request["top_p"] = self.top_p
+        if self.presence_penalty is not None:
+            request["presence_penalty"] = self.presence_penalty
+        if self.local_extras:
+            extra: dict[str, object] = {
+                # oMLX and llama-server both honor this nested flag.
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            if self.top_k is not None:
+                extra["top_k"] = self.top_k
+            if self.min_p is not None:
+                extra["min_p"] = self.min_p
+            request["extra_body"] = extra
         try:
-            response = client.chat.completions.create(
-                model=self.model,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                presence_penalty=self.presence_penalty,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                extra_body={
-                    "top_k": self.top_k,
-                    "min_p": self.min_p,
-                    # oMLX and llama-server both honor this nested flag.
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
-            )
+            response = client.chat.completions.create(**request)  # type: ignore[call-overload]
         except Exception as exc:
             raise LlmError(f"LLM request to {self.base_url} failed: {exc}") from exc
         if not response.choices:

@@ -1,0 +1,104 @@
+{
+  "name": "meetscribe → Slack",
+  "nodes": [
+    {
+      "id": "b6a1f3e0-0000-4000-8000-000000000001",
+      "name": "meetscribe webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "meetscribe",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meetscribe",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "meetscribe token (X-Meetscribe-Token)"
+        }
+      }
+    },
+    {
+      "id": "b6a1f3e0-0000-4000-8000-000000000002",
+      "name": "Format for Slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// n8n Code node (\"Run Once for Each Item\"): meetscribe payload -> Slack text + file.\n// Kept as a separate file so it can be reviewed; the workflow JSON embeds a copy.\nconst p = $json.body ?? $json;\nif (p.source !== 'meetscribe') {\n  throw new Error('Not a meetscribe payload');\n}\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst list = (items) => items.map((s) => `• ${esc(s)}`).join('\\n');\nconst s = p.summary ?? {};\nconst lines = [`*${esc(p.title)}*  ${esc(p.started_at)}`];\nif (p.participants?.length) lines.push(`參與者：${p.participants.map(esc).join('、')}`);\nif (s.overview) lines.push('', esc(s.overview));\nif (s.key_points?.length) lines.push('', '*重點*', list(s.key_points));\nif (s.decisions?.length) lines.push('', '*決議*', list(s.decisions));\nif (s.action_items?.length) {\n  lines.push('', '*待辦*');\n  for (const a of s.action_items) {\n    const owner = a.owner ? `（${esc(a.owner)}）` : '';\n    const due = a.due ? ` — ${esc(a.due)}` : '';\n    lines.push(`• ${esc(a.task)}${owner}${due}`);\n  }\n}\nconst markdown = p.note?.markdown ?? '';\nreturn {\n  json: { text: lines.join('\\n'), title: p.title, fileName: p.note?.filename ?? 'meeting.md' },\n  binary: {\n    note: {\n      data: Buffer.from(markdown, 'utf8').toString('base64'),\n      mimeType: 'text/markdown',\n      fileName: p.note?.filename ?? 'meeting.md',\n      fileExtension: 'md',\n    },\n  },\n};\n"
+      }
+    },
+    {
+      "id": "b6a1f3e0-0000-4000-8000-000000000003",
+      "name": "Upload note to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "resource": "file",
+        "binaryPropertyName": "note",
+        "options": {
+          "channelIds": [
+            "SET_CHANNEL_ID"
+          ],
+          "fileName": "={{ $json.fileName }}",
+          "title": "={{ $json.title }}",
+          "initialComment": "={{ $json.text }}"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "meetscribe webhook": {
+      "main": [
+        [
+          {
+            "node": "Format for Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Slack": {
+      "main": [
+        [
+          {
+            "node": "Upload note to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false
+  },
+  "pinData": {}
+}

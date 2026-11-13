@@ -1,0 +1,20 @@
+# Slack App manifest for meetscribe's direct publisher ([publish] kind = "slack").
+# api.slack.com/apps → Create New App → From an app manifest → paste this.
+# Outbound only: no events, slash commands, or public request URLs.
+display_information:
+  name: meetscribe
+  description: Posts meeting summaries and notes.
+features:
+  bot_user:
+    display_name: meetscribe
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write    # summary message (long summaries)
+      - files:write   # upload the .md note with the summary as its comment
+      - im:write      # open DMs for user-ID (U…) targets
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

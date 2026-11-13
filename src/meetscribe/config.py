@@ -69,11 +69,24 @@ def llm_provider_for(system: str, machine: str) -> str:
     return "llama-server"
 
 
+REMOTE_PROVIDER = "openai-compatible"
+LOCAL_PROVIDERS = frozenset({"omlx", "llama-server"})
+_REMOTE_ALIASES = frozenset({REMOTE_PROVIDER, "openai", "remote", "cloud"})
+
+
 def normalize_llm_provider(provider: str) -> str:
     name = provider.strip().lower()
-    if name in {"omlx", "llama-server"}:
+    if name in LOCAL_PROVIDERS:
         return name
-    raise ConfigError("llm provider must be 'omlx' or 'llama-server'")
+    if name in _REMOTE_ALIASES:
+        return REMOTE_PROVIDER
+    raise ConfigError("llm provider must be 'omlx', 'llama-server', or 'openai-compatible'")
+
+
+def is_local_provider(provider: str) -> bool:
+    """Local servers accept llama.cpp extras (top_k, min_p, chat_template_kwargs)."""
+
+    return provider in LOCAL_PROVIDERS
 
 
 def provider_defaults(provider: str) -> tuple[str, str, str]:
@@ -82,6 +95,9 @@ def provider_defaults(provider: str) -> tuple[str, str, str]:
     name = normalize_llm_provider(provider)
     if name == "omlx":
         return OMLX_BASE_URL, OMLX_MODEL, OMLX_FALLBACK
+    if name == REMOTE_PROVIDER:
+        # A hosted API has no sensible default; base_url and model must be set.
+        return "", "", ""
     return LLAMA_SERVER_BASE_URL, LLAMA_SERVER_MODEL, LLAMA_SERVER_FALLBACK
 
 
@@ -127,6 +143,9 @@ class LlmSettings:
     context_tokens: int = 16384
     # Room for the JSON completion. Not sent to the server.
     reserve_tokens: int = 2048
+    # Seconds per chat request. Local servers may load the model on the first
+    # request (Gemma 4 12B on an Arc iGPU: ~90 s), so this is generous.
+    timeout: float = 600.0
     # None means "use the matched profile". A value set in TOML or on the CLI overrides it.
     temperature: float | None = None
     top_p: float | None = None
@@ -150,12 +169,33 @@ class CaptureSettings:
     chunk_seconds: float = 5.0
 
 
+PUBLISH_KINDS = ("webhook", "slack")
+
+
+@dataclass
+class PublishSettings:
+    # "webhook": POST JSON to url (e.g. n8n). "slack": call the Slack Web API directly.
+    kind: str = "webhook"
+    # Webhook that receives the finished note. Empty disables the webhook kind.
+    url: str = ""
+    # Publish automatically at the end of `run`.
+    auto: bool = False
+    # Environment variable holding the shared secret sent as X-Meetscribe-Token.
+    token_env: str = "MEETSCRIBE_PUBLISH_TOKEN"
+    # Slack channel IDs (C…) or user IDs (U…, sent as a direct message).
+    slack_targets: tuple[str, ...] = ()
+    # Environment variable holding the bot token (xoxb-…).
+    slack_token_env: str = "SLACK_BOT_TOKEN"
+    timeout: float = 30.0
+
+
 @dataclass
 class AppConfig:
     asr: AsrSettings = field(default_factory=AsrSettings)
     diarization: DiarizationSettings = field(default_factory=DiarizationSettings)
     llm: LlmSettings = field(default_factory=LlmSettings)
     capture: CaptureSettings = field(default_factory=CaptureSettings)
+    publish: PublishSettings = field(default_factory=PublishSettings)
     speaker_map: dict[str, str] = field(default_factory=dict)
     output_dir: Path = field(default_factory=Path.cwd)
 
@@ -172,6 +212,16 @@ class AppConfig:
     def hf_token(self, environ: Mapping[str, str] | None = None) -> str | None:
         env = os.environ if environ is None else environ
         value = env.get(self.diarization.hf_token_env, "").strip()
+        return value or None
+
+    def publish_token(self, environ: Mapping[str, str] | None = None) -> str | None:
+        env = os.environ if environ is None else environ
+        value = env.get(self.publish.token_env, "").strip()
+        return value or None
+
+    def slack_token(self, environ: Mapping[str, str] | None = None) -> str | None:
+        env = os.environ if environ is None else environ
+        value = env.get(self.publish.slack_token_env, "").strip()
         return value or None
 
 
@@ -235,6 +285,7 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
     diar = config.diarization
     llm = config.llm
     capture = config.capture
+    publish = config.publish
     speaker_map = dict(config.speaker_map)
     output_dir = config.output_dir
 
@@ -324,12 +375,15 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, object]) -> AppCo
             raise ConfigError("speaker_map override must be a mapping")
         for key, value in incoming.items():
             speaker_map[str(key)] = str(value)
+    if "publish_url" in overrides and overrides["publish_url"] is not None:
+        publish = replace(publish, url=str(overrides["publish_url"]))
 
     return AppConfig(
         asr=asr,
         diarization=diar,
         llm=llm,
         capture=capture,
+        publish=publish,
         speaker_map=speaker_map,
         output_dir=output_dir,
     )
@@ -374,6 +428,7 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
     diar = config.diarization
     llm = config.llm
     capture = config.capture
+    publish = config.publish
     speaker_map = dict(config.speaker_map)
     output_dir = config.output_dir
 
@@ -432,6 +487,8 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         llm = replace(llm, context_tokens=_as_int(llm_table["context_tokens"], "context_tokens"))
     if "reserve_tokens" in llm_table:
         llm = replace(llm, reserve_tokens=_as_int(llm_table["reserve_tokens"], "reserve_tokens"))
+    if "timeout" in llm_table:
+        llm = replace(llm, timeout=_as_float(llm_table["timeout"], "timeout"))
     if "temperature" in llm_table:
         llm = replace(llm, temperature=_as_float(llm_table["temperature"], "temperature"))
     if "top_p" in llm_table:
@@ -473,6 +530,31 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
             chunk_seconds=_as_float(capture_table["chunk_seconds"], "chunk_seconds"),
         )
 
+    publish_table = _table(data.get("publish"), "publish")
+    if "url" in publish_table:
+        publish = replace(publish, url=str(publish_table["url"]))
+    if "auto" in publish_table:
+        auto = publish_table["auto"]
+        if not isinstance(auto, bool):
+            raise ConfigError("[publish].auto must be a boolean")
+        publish = replace(publish, auto=auto)
+    if "token_env" in publish_table:
+        publish = replace(publish, token_env=str(publish_table["token_env"]))
+    if "timeout" in publish_table:
+        publish = replace(publish, timeout=_as_float(publish_table["timeout"], "timeout"))
+    if "kind" in publish_table:
+        kind = str(publish_table["kind"]).strip().lower()
+        if kind not in PUBLISH_KINDS:
+            raise ConfigError(f"[publish].kind must be one of {', '.join(PUBLISH_KINDS)}")
+        publish = replace(publish, kind=kind)
+    if "slack_targets" in publish_table:
+        targets = publish_table["slack_targets"]
+        if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
+            raise ConfigError("[publish].slack_targets must be a list of strings")
+        publish = replace(publish, slack_targets=tuple(targets))
+    if "slack_token_env" in publish_table:
+        publish = replace(publish, slack_token_env=str(publish_table["slack_token_env"]))
+
     speakers = _table(data.get("speakers"), "speakers")
     for key, value in speakers.items():
         speaker_map[str(key)] = str(value)
@@ -482,6 +564,7 @@ def _merge_toml(config: AppConfig, data: Mapping[str, object]) -> AppConfig:
         diarization=diar,
         llm=llm,
         capture=capture,
+        publish=publish,
         speaker_map=speaker_map,
         output_dir=output_dir,
     )
@@ -503,6 +586,8 @@ def _apply_env(config: AppConfig, env: Mapping[str, str]) -> AppConfig:
         overrides["model_dir"] = env["MEETSCRIBE_MODEL_DIR"]
     if env.get("MEETSCRIBE_WHISPER_CPP"):
         overrides["whisper_cpp_bin"] = env["MEETSCRIBE_WHISPER_CPP"]
+    if env.get("MEETSCRIBE_PUBLISH_URL"):
+        overrides["publish_url"] = env["MEETSCRIBE_PUBLISH_URL"]
     if env.get("MEETSCRIBE_ASR_URL"):
         overrides["asr_server_url"] = env["MEETSCRIBE_ASR_URL"]
     if env.get("MEETSCRIBE_OPENVINO_DEVICE"):
@@ -597,7 +682,7 @@ def _table(value: object, section: str) -> Mapping[str, object]:
 
 
 def _reject_secrets(data: Mapping[str, object]) -> None:
-    for section_name in ("llm", "diarization", "asr", "capture"):
+    for section_name in ("llm", "diarization", "asr", "capture", "publish"):
         section = data.get(section_name)
         if not isinstance(section, Mapping):
             continue

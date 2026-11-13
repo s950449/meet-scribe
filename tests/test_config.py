@@ -219,3 +219,12 @@ def test_apply_overrides_ignores_empty() -> None:
     updated = apply_overrides(config, {"asr_backend": None, "language": "en"})
     assert updated.asr.backend == "auto"
     assert updated.asr.language == "en"
+
+
+def test_llm_timeout_defaults_long_and_reads_toml(tmp_path) -> None:
+    from meetscribe.config import AppConfig, load_config
+
+    assert AppConfig().llm.timeout == 600.0
+    path = tmp_path / "config.toml"
+    path.write_text("[llm]\ntimeout = 90\n", encoding="utf-8")
+    assert load_config(path, environ={}).llm.timeout == 90.0

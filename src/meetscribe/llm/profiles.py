@@ -8,7 +8,13 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from meetscribe.config import DEFAULT_LLM_MODEL, AppConfig, LlmSettings, SamplingProfile
+from meetscribe.config import (
+    DEFAULT_LLM_MODEL,
+    AppConfig,
+    LlmSettings,
+    SamplingProfile,
+    is_local_provider,
+)
 from meetscribe.errors import ConfigError
 
 
@@ -108,6 +114,28 @@ def select_active_llm(
     """
 
     settings = config.llm
+    if not is_local_provider(settings.provider):
+        # A hosted /v1/models lists many models, so never auto-pick from it.
+        if not settings.base_url.strip() or not settings.model.strip():
+            raise ConfigError(
+                "provider 'openai-compatible' needs [llm].base_url and [llm].model "
+                "(or --base-url and --llm-model)."
+            )
+        placeholders = [
+            value for value in (settings.base_url, settings.model) if "YOUR-" in value.upper()
+        ]
+        if placeholders:
+            raise ConfigError(
+                "[llm] still has a placeholder: " + ", ".join(placeholders) + ". "
+                "Set your provider's base_url and model id."
+            )
+        _, profile = match_profile(settings.model, settings.profiles)
+        return ActiveLlm(
+            model=settings.model,
+            source="cli" if settings.model_locked else "config",
+            sampling=apply_sampling_overrides(profile, settings),
+            profile=None,
+        )
     if settings.model_locked:
         model = settings.model
         source = "cli"
