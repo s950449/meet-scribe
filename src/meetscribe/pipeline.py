@@ -43,6 +43,12 @@ from meetscribe.types import (
 )
 
 PENDING_SUMMARY = "（尚未摘要。執行 meetscribe summarize 以產生摘要。）"
+AGENT_PENDING_SUMMARY = "（等待外部 agent 潤飾與摘要。）"
+NO_SUMMARY = "（未產生摘要。）"
+
+
+def _pending_overview(polish_mode: str) -> str:
+    return {"agent": AGENT_PENDING_SUMMARY, "none": NO_SUMMARY}.get(polish_mode, PENDING_SUMMARY)
 
 
 class _Polisher(Protocol):
@@ -220,11 +226,7 @@ def run_meeting(
         document = MeetingDocument(
             title=meeting_title,
             started_at=captured.started_at,
-            summary=MeetingSummary(
-                overview="（等待外部 agent 潤飾與摘要。）"
-                if config.llm.polish_mode == "agent"
-                else PENDING_SUMMARY
-            ),
+            summary=MeetingSummary(overview=_pending_overview(config.llm.polish_mode)),
             utterances=tuple(utterances),
             speaker_map=dict(config.speaker_map),
         )

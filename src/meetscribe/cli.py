@@ -195,6 +195,8 @@ def transcribe(
     """Transcribe audio, assign speakers, and optionally polish. Does not summarize."""
 
     def action(sink: StdioSink) -> None:
+        if no_polish and polish_mode is not None:
+            raise MeetscribeError("Use either --no-polish or --polish-mode, not both.")
         config = _config(
             ctx,
             asr_backend=asr_backend,
@@ -347,6 +349,8 @@ def run(
     """Record or load audio, then transcribe, polish, and summarize."""
 
     def action(sink: StdioSink) -> None:
+        if no_polish and polish_mode is not None:
+            raise MeetscribeError("Use either --no-polish or --polish-mode, not both.")
         if resume and source is None:
             raise MeetscribeError(
                 "Pass the original source file or recording directory with --resume."
