@@ -104,7 +104,12 @@ struct Main {
         let sink = AudioSink()
         do {
             try await sink.start()
-            dispatchMain()
+            // async main already runs on the main executor. dispatchMain() here
+            // traps because it is called from a block on the main queue.
+            while true {
+                try await Task.sleep(nanoseconds: 3_600_000_000_000)
+                withExtendedLifetime(sink) {}
+            }
         } catch {
             fputs("meetscribe-system-audio: \(error)\n", stderr)
             exit(1)

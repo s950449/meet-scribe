@@ -4,9 +4,9 @@ ScreenCaptureKit's audio callback is a completion-handler API that PyObjC only
 wraps awkwardly, and the process that calls it must hold the Screen Recording
 permission. A small Swift helper (``scripts/macos/SystemAudioCapture.swift``)
 is the capture path: it writes 48 kHz s16le mono PCM to stdout, and this module
-stamps each read with ``time.monotonic()``. The microphone stays in-process
-through sounddevice so both tracks share that clock. Pipe delay is a few
-milliseconds and is absorbed by the same gap/drop alignment as device drift.
+anchors the first read to ``time.monotonic()`` and advances by sample count.
+Pipe delivery jitter must not be treated as missing or overlapping audio.
+The microphone stays in-process through sounddevice.
 """
 
 from __future__ import annotations
@@ -224,10 +224,15 @@ class _SystemHelper:
     def _read(self) -> None:
         assert self._proc.stdout is not None
         frame_bytes = int(HELPER_RATE / 10) * 2
+        origin: float | None = None
+        frames = 0
         while not self._stop:
             chunk = self._proc.stdout.read(frame_bytes)
             if not chunk:
                 break
             pcm = np.frombuffer(chunk, dtype="<i2").astype(np.float32) / 32768.0
-            host = time.monotonic() - pcm.size / HELPER_RATE
+            if origin is None:
+                origin = time.monotonic() - pcm.size / HELPER_RATE
+            host = origin + frames / HELPER_RATE
+            frames += pcm.size
             self._session.write(self._track_id, host, pcm, HELPER_RATE)
