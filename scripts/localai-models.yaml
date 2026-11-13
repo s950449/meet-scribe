@@ -1,0 +1,35 @@
+# Models served to meetscribe by scripts/start-localai.sh.
+# Weights live in ~/.local/share/meetscribe/models (mounted at /models).
+- name: gemma-4-12b-it
+  backend: llama-cpp
+  known_usecases:
+    - chat
+  context_size: 16384
+  gpu_layers: 99
+  f16: true
+  mmap: true
+  options:
+    - use_jinja:true
+  parameters:
+    model: gemma-4-12b-it-UD-Q4_K_XL.gguf
+    temperature: 1
+    top_p: 0.95
+    top_k: 64
+    min_p: 0
+    repeat_penalty: 1
+  template:
+    use_tokenizer_template: true
+  # meetscribe wants plain answers; LocalAI ignores per-request
+  # chat_template_kwargs, so thinking is disabled here.
+  reasoning:
+    disable: true
+  function:
+    grammar:
+      disable: true
+- name: breeze-asr-25
+  backend: intel-sycl-f16-whisper
+  known_usecases:
+    - transcript
+  parameters:
+    model: ggml-breeze-asr-25.bin
+    language: zh
